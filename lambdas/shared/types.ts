@@ -17,7 +17,8 @@ export enum Urgency {
     CRITICAL = 'CRITICAL',
 }
 
-export interface TicketAnalytics {
+// The model's triage of a ticket. Stored in DynamoDB under the `analytics` attribute.
+export interface TicketTriage {
     urgency: Urgency;
     response: string;
 }

@@ -101,7 +101,10 @@ npm run check        # what CI would run: format check + lint
 │   │   └── support-request-processor.ts # SQS handler
 │   └── shared/
 │       ├── types.ts                     # TypeScript types
-│       └── errors-handler.ts            # Error logging utilities
+│       ├── triage-model.ts              # Prompt, Bedrock call, reading the model's answer
+│       ├── classify-error.ts            # Retry (transient) or fail (permanent)?
+│       ├── logger.ts                    # Structured JSON logger (Powertools)
+│       └── env.ts                       # Required environment variables
 ├── events/
 │   └── new-ticket.json                  # Test event
 ├── eval/                                # Evaluation: measures the deployed pipeline
@@ -180,45 +183,21 @@ Commit before a real run: the report records the commit, and warns when there ar
 
 ### CloudWatch Logs
 
-The application uses CloudWatch Logs for centralized logging:
+The processor writes structured JSON logs with [Powertools for AWS Lambda](https://docs.powertools.aws.dev/lambda/typescript/latest/core/logger/) to its own log group, `/{StackName}/processor` (30-day retention). Logs hold ids, sizes and outcomes, never ticket content or model replies.
 
-- **Lambda Function Logs**: Each Lambda function automatically logs to CloudWatch Logs
-  - Log format: JSON (configured in `template.yaml`)
-  - Log retention: Default (never expire) for Lambda logs
+| `message` | Level | Meaning |
+|---|---|---|
+| `TicketProcessed` | INFO | Triaged, saved and the support team notified (`urgency`, `durationMs`) |
+| `RecordRetried` | WARN | A transient error; SQS retries the message, then sends it to the DLQ |
+| `TicketFailed` | ERROR | A permanent error; the ticket is marked `FAILED` with the reason |
+| `PoisonedMessage` | ERROR | A message that isn't a readable ticket; dropped |
 
-- **Bedrock Error Log Group**: Dedicated log group for Bedrock processing errors
-  - Log Group Name: `{StackName}-BedrockTicketProcessorErrorLogGroup`
-  - Retention: 30 days
-  - Contains structured error logs with:
-    - Error details (name, message, stack trace)
-    - Ticket ID and context
-    - Bedrock model ID and request metadata
-    - Timestamp and environment information
+One line per message, for how it ended: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
 
+### CloudWatch Metrics and Alarms
 
-### CloudWatch Metrics
-
-The application includes custom CloudWatch metrics:
-
-- **BedrockTicketProcessorErrors**: Tracks errors from the Bedrock ticket processor
-  - Namespace: `SupportPipeline`
-  - Metric Name: `BedrockTicketProcessorErrors`
-  - Filter Pattern: `{ $.level = "ERROR" && $.service = "BedrockTicketProcessor" }`
-  - Increments by 1 for each error logged
-
-**Viewing Metrics:**
-- AWS Console: CloudWatch → Metrics → Custom Namespaces → SupportPipeline
-- AWS CLI: `aws cloudwatch get-metric-statistics --namespace SupportPipeline --metric-name BedrockTicketProcessorErrors`
-
-### CloudWatch Alarms
-
-**Bedrock Ticket Processor Error Alarm:**
-- **Alarm Name**: `{StackName}-BedrockTicketProcessorErrors`
-- **Metric**: `BedrockTicketProcessorErrors` (Sum)
-- **Threshold**: > 5 errors in 5 minutes
-- **Action**: Sends notification to `BedrockTicketProcessorErrorAlertTopic` SNS topic
-- **Missing Data**: Treated as not breaching (no alarm when no data)
-
+- **Metric** `TriageDesk / ProcessorErrors`: a metric filter counts the processor's `ERROR` lines.
+- **Alarm** `{StackName}-ProcessorErrors`: fires on 1 or more in 5 minutes, since each one is a ticket that needs a person. It notifies the alert topic (output `AlertTopicArn`). Missing data counts as OK.
 
 ## Cleanup
 

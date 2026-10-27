@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from '@jest/globals';
-import { SQSEvent, SQSRecord } from 'aws-lambda';
+import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { Context, SQSEvent, SQSRecord } from 'aws-lambda';
 import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
     BedrockRuntimeClient,
@@ -11,7 +11,8 @@ import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { handler } from '../../handlers/support-request-processor';
+import { handler, processRecord } from '../../handlers/support-request-processor';
+import { logger } from '../../shared/logger';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 const bedrockMock = mockClient(BedrockRuntimeClient);
@@ -38,6 +39,12 @@ function novaResponse(answer: object) {
     return novaText(JSON.stringify(answer));
 }
 
+// Just enough of a Lambda context for the logger.
+const lambdaContext = {
+    functionName: 'triage-desk-ProcessorFunction',
+    awsRequestId: 'test-request-id',
+} as Context;
+
 // What the SDK passes to its exception constructors.
 const sdkError = { message: 'test', $metadata: {} };
 
@@ -54,7 +61,7 @@ describe('support-request-processor', () => {
         ddbMock.on(UpdateCommand, { Key: { id: 'ticket-2' } }).rejects(new Error('DynamoDB unavailable'));
         const event: SQSEvent = { Records: [exampleRecord(1), exampleRecord(2), exampleRecord(3)] };
 
-        const result = await handler(event);
+        const result = await handler(event, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-2' }] });
 
@@ -73,7 +80,7 @@ describe('support-request-processor', () => {
         ddbMock.on(UpdateCommand).resolves({});
         const event: SQSEvent = { Records: [exampleRecord(1), exampleRecord(2), exampleRecord(3)] };
 
-        const result = await handler(event);
+        const result = await handler(event, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [] });
         expect(snsMock.commandCalls(PublishCommand)).toHaveLength(3);
@@ -82,7 +89,7 @@ describe('support-request-processor', () => {
     it('retries a transient Bedrock error without writing or notifying', async () => {
         bedrockMock.on(InvokeModelCommand).rejects(new ThrottlingException(sdkError));
 
-        const result = await handler({ Records: [exampleRecord(1)] });
+        const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-1' }] });
         expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
@@ -93,7 +100,7 @@ describe('support-request-processor', () => {
         bedrockMock.on(InvokeModelCommand).rejects(new ValidationException(sdkError));
         ddbMock.on(UpdateCommand).resolves({});
 
-        const result = await handler({ Records: [exampleRecord(1)] });
+        const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [] });
         const values = ddbMock.commandCalls(UpdateCommand)[0].args[0].input.ExpressionAttributeValues;
@@ -110,7 +117,7 @@ describe('support-request-processor', () => {
         bedrockMock.on(InvokeModelCommand).resolves(novaText(text));
         ddbMock.on(UpdateCommand).resolves({});
 
-        const result = await handler({ Records: [exampleRecord(1)] });
+        const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [] });
         const values = ddbMock.commandCalls(UpdateCommand)[0].args[0].input.ExpressionAttributeValues;
@@ -122,7 +129,7 @@ describe('support-request-processor', () => {
         bedrockMock.on(InvokeModelCommand).rejects(new ValidationException(sdkError));
         ddbMock.on(UpdateCommand).rejects(new Error('DynamoDB unavailable'));
 
-        const result = await handler({ Records: [exampleRecord(1)] });
+        const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-1' }] });
     });
@@ -131,10 +138,59 @@ describe('support-request-processor', () => {
         ddbMock.on(UpdateCommand).resolves({});
         const poisoned = { ...exampleRecord(2), body: 'not json' };
 
-        const result = await handler({ Records: [exampleRecord(1), poisoned, exampleRecord(3)] });
+        const result = await handler({ Records: [exampleRecord(1), poisoned, exampleRecord(3)] }, lambdaContext);
 
         expect(result).toEqual({ batchItemFailures: [] });
         expect(bedrockMock.commandCalls(InvokeModelCommand)).toHaveLength(2);
         expect(snsMock.commandCalls(PublishCommand)).toHaveLength(2);
+    });
+
+    describe('processRecord outcome', () => {
+        it("is 'processed' when the ticket is triaged, saved and announced", async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
+        });
+
+        it("is 'failed' on a permanent Bedrock error", async () => {
+            bedrockMock.on(InvokeModelCommand).rejects(new ValidationException(sdkError));
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('failed');
+        });
+
+        it("is 'dropped' for a message body that isn't JSON", async () => {
+            await expect(processRecord({ ...exampleRecord(1), body: 'not json' })).resolves.toBe('dropped');
+        });
+
+        it('throws on a transient Bedrock error, so the record is retried', async () => {
+            bedrockMock.on(InvokeModelCommand).rejects(new ThrottlingException(sdkError));
+
+            await expect(processRecord(exampleRecord(1))).rejects.toThrow(ThrottlingException);
+        });
+    });
+
+    it('never writes ticket content or the model reply to the logs', async () => {
+        const secret = 'my password is hunter2';
+        const reply = 'Reset it at example.com';
+        // Bedrock is called in batch order: ticket-1 gets an answer, ticket-3 is throttled
+        bedrockMock
+            .on(InvokeModelCommand)
+            .resolvesOnce(novaResponse({ urgency: 'HIGH', response: reply }))
+            .rejectsOnce(new ThrottlingException(sdkError));
+        ddbMock.on(UpdateCommand).resolves({});
+        const record = { ...exampleRecord(1), body: JSON.stringify({ ticketId: 'ticket-1', content: secret }) };
+        const poisoned = { ...exampleRecord(2), body: `not json: ${secret}` };
+        const throttled = { ...exampleRecord(3), body: JSON.stringify({ ticketId: 'ticket-3', content: secret }) };
+        const spies = (['debug', 'info', 'warn', 'error'] as const).map((level) => jest.spyOn(logger, level));
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        await handler({ Records: [record, poisoned, throttled] }, lambdaContext);
+
+        const logged = JSON.stringify([...spies, consoleSpy].flatMap((spy) => spy.mock.calls));
+        expect(logged).toContain('ticket-1');
+        expect(logged).not.toContain('hunter2');
+        expect(logged).not.toContain(reply);
+        [...spies, consoleSpy].forEach((spy) => spy.mockRestore());
     });
 });

@@ -110,20 +110,15 @@ Resources:
                 - bedrock:InvokeModel
               Resource:
                 - 'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0'
-            - Effect: Allow
-              Action:
-                - logs:CreateLogGroup
-                - logs:CreateLogStream
-                - logs:PutLogEvents
-              Resource:
-                - !GetAtt BedrockTicketProcessorErrorLogGroup.Arn
-                - !Sub '${BedrockTicketProcessorErrorLogGroup.Arn}:*'
+      LoggingConfig:
+        LogGroup: !Ref ProcessorLogGroup
       Environment:
         Variables:
           SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           BEDROCK_MODEL_ID: amazon.nova-lite-v1:0
           SNS_TOPIC_ARN: !GetAtt SupportTicketNotificationTopic.TopicArn
-          ERROR_LOG_GROUP_NAME: !Ref BedrockTicketProcessorErrorLogGroup
+          POWERTOOLS_SERVICE_NAME: triage-processor
+          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -181,39 +176,43 @@ Resources:
       - Key: SubscriptionType
         Value: SelfService
 
-  BedrockTicketProcessorErrorLogGroup:
+  # The processor's own log group, managed here so it has a retention and the metric
+  # filter below has something to attach to on the first deploy.
+  ProcessorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '${AWS::StackName}-BedrockTicketProcessorErrorLogGroup'
+      LogGroupName: !Sub '/${AWS::StackName}/processor'
       RetentionInDays: 30
 
-  BedrockTicketProcessorErrorMetricFilter:
+  # Counts the processor's ERROR lines (TicketFailed, PoisonedMessage): each one is a
+  # ticket that needs a person. Transient errors are WARN and end in the DLQ instead.
+  ProcessorErrorMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
-      LogGroupName: !Ref BedrockTicketProcessorErrorLogGroup
-      FilterPattern: '{ $.level = "ERROR" && $.service = "BedrockTicketProcessor" }'
+      LogGroupName: !Ref ProcessorLogGroup
+      FilterPattern: '{ $.level = "ERROR" }'
       MetricTransformations:
-        - MetricName: BedrockTicketProcessorErrors
-          MetricNamespace: SupportPipeline
+        - MetricName: ProcessorErrors
+          MetricNamespace: TriageDesk
           MetricValue: 1
-          DefaultValue: 0
 
-  BedrockTicketProcessorErrorAlarm:
+  ProcessorErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-BedrockTicketProcessorErrors'
-      AlarmDescription: 'Alerts when Bedrock Ticket Processor errors occur'
-      MetricName: BedrockTicketProcessorErrors
-      Namespace: SupportPipeline
+      AlarmName: !Sub '${AWS::StackName}-ProcessorErrors'
+      AlarmDescription: 'A ticket was marked FAILED or a message was dropped: someone has to look'
+      MetricName: ProcessorErrors
+      Namespace: TriageDesk
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
-      Threshold: 5
-      ComparisonOperator: GreaterThanThreshold
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions:
         - !Ref BedrockTicketProcessorErrorAlertTopic
       TreatMissingData: notBreaching
 
+  # Logical id kept from v0 so existing email subscriptions survive; renamed with the §8 alarms.
   BedrockTicketProcessorErrorAlertTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -247,8 +246,8 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-TicketNotificationTopicArn'
 
-  BedrockErrorAlertTopicArn:
-    Description: SNS Topic ARN for Bedrock Error Alerts - Share this with technical admins to subscribe
+  AlertTopicArn:
+    Description: SNS Topic ARN for pipeline alarms - Share this with technical admins to subscribe
     Value: !Ref BedrockTicketProcessorErrorAlertTopic
 
   SubscriptionInstructions:
