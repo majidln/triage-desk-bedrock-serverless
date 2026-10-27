@@ -138,6 +138,8 @@ Every step moves at least one of these. The steps refer to them by ID.
 | **Batch size** (Step 1) | 5. Records run one after another, so the last ticket in a batch waits ~12 s (10 would be ~27 s, against the p95 < 30 s target). 1 would mean one invocation per ticket, and more parallel Bedrock calls |
 | **Processor timeout** (Step 1) | 60 s: a batch of 5 takes ~15 s. The handler stops starting tickets with less than 35 s left and hands them back, so it always returns before Lambda stops it (a timed-out invocation retries the whole batch) |
 | **Visibility timeout** (Step 1) | 360 s, 6 × the processor timeout, as AWS recommends, so SQS doesn't lend a message to a second invocation while the first may still be working on it |
+| **Processor concurrency** (Step 1) | `MaximumConcurrency: 5` on the queue trigger. Nova Lite allows 100 requests a minute; one processor at ~3 s a ticket makes ~20, so 5 fill the quota and extra tickets wait in the queue. The 3 s is an estimate from Step 0 (submit → draft p50 2.4 s); check it against `TicketProcessed` `durationMs` after deploying |
+| **Reserved concurrency** (Step 1) | None. Capping the processor with it makes Lambda throttle batches the poller has already taken, which hides them for the visibility timeout and uses up receives toward the DLQ. The account limit is 1000, so the receiver doesn't need slots kept for it |
 | **maxReceiveCount** (Step 1) | 5: ~30 min of retries (5 × 6 min) rides out a short Bedrock outage, and absorbs handed-back tickets, before the DLQ |
 
 ---

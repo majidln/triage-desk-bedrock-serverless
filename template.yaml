@@ -109,6 +109,10 @@ Resources:
             BatchSize: 5
             FunctionResponseTypes:
               - ReportBatchItemFailures
+            # At most 5 processors at once, sized to Bedrock's 100 requests a minute. Extra tickets wait in the queue.
+            # Not reserved concurrency: Lambda would throttle the batches the poller still takes, and they would use up receives.
+            ScalingConfig:
+              MaximumConcurrency: 5
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SupportTicketTable
