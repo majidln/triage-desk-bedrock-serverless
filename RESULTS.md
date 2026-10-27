@@ -190,6 +190,10 @@ Run on 2026-10-27 against the deployed stack.
 | Alarm, for real | The poisoned message's ERROR line → `ProcessorErrors` metric → `triage-desk-ProcessorErrors` went to ALARM ~80 s later and published to `triage-desk-Alerts`, which emails the confirmed subscription |
 | Receiver throttled → `Api5xx` alarm | Receiver reserved concurrency set to 0: three `POST`s got `503 Service Unavailable`, the Step 0 failure. `triage-desk-Api5xx` went to ALARM ~100 s later, and back to OK ~4 min after the setting was removed |
 | Message in the request DLQ → `RequestDLQ` alarm | One test message sent straight to the DLQ: ALARM ~2.5 min later. Deleted at once, but the alarm stayed in ALARM for 8 min, because `Maximum` over a 5-minute window still includes the minute the message was there |
+| Message in the intake DLQ → `IntakeDLQ` alarm | One test message sent straight to the intake DLQ: ALARM ~3 min later, message deleted |
+| Processor crash → `ProcessorCrashes` alarm | The processor invoked by hand with `{}`: `TypeError: e.Records is not iterable`, an unhandled error. ALARM ~2 min later. The runtime logs the crash as a JSON line with `"level":"ERROR"`, so `ProcessorErrors` fired too. A sparse metric keeps its alarm red for up to ~20 min: CloudWatch looks back over a few periods before it treats missing data as OK |
+| The same message delivered twice | A processed ticket's stream record sent to the queue twice: 2 × `DuplicateMessage`, no Bedrock call, `notifiedAt` and `updatedAt` unchanged, so no second email |
+| Not proven live | A transient failure retried 5 times into the DLQ (unit tests and the redrive policy only), and `QueueBacklog` (needs a message older than 20 min) |
 
 ### Step 1 findings
 
