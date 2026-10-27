@@ -1,4 +1,4 @@
-import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { AttributeValue, ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { Context, SQSBatchItemFailure, SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
@@ -132,17 +132,29 @@ async function alreadyHandled(
     return 'duplicate';
 }
 
+// Each message is one DynamoDB stream record, as the intake pipe sends it from the table:
+//   { "eventName": "INSERT", "dynamodb": { "NewImage": { "id": { "S": "…" }, "content": { "S": "…" }, … } }, … }
 function parseMessage(body: string): SupportTicketMessage {
-    let message: Partial<SupportTicketMessage>;
+    let record: { dynamodb?: { NewImage?: Record<string, AttributeValue> } } | null;
     try {
-        message = JSON.parse(body);
+        record = JSON.parse(body);
     } catch {
         throw new PermanentError('Message body is not JSON');
     }
-    if (typeof message?.ticketId !== 'string' || typeof message.content !== 'string') {
-        throw new PermanentError('Message body has no ticketId or content');
+    const image = record?.dynamodb?.NewImage;
+    if (!image) {
+        throw new PermanentError('Message is not a DynamoDB stream record');
     }
-    return { ticketId: message.ticketId, content: message.content };
+    let ticket: Record<string, unknown>;
+    try {
+        ticket = unmarshall(image);
+    } catch {
+        throw new PermanentError('Stream record has an unreadable ticket');
+    }
+    if (typeof ticket.id !== 'string' || typeof ticket.content !== 'string') {
+        throw new PermanentError('Stream record has no ticket id or content');
+    }
+    return { ticketId: ticket.id, content: ticket.content };
 }
 
 // The parts of a stored ticket the duplicate check reads.

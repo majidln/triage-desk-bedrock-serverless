@@ -12,26 +12,30 @@ This pipeline receives customer support requests via API Gateway, stores them in
 
 1. **Support Request Receiver** (`support-request-receiver.ts`)
    - Receives POST requests at `/support-request`
-   - Creates ticket records in DynamoDB
-   - Queues tickets for processing via SQS
+   - Creates the ticket in DynamoDB: its only write
 
-2. **Fetch Support Ticket** (`fetch-support-ticket.ts`)
+2. **Ticket intake** (an EventBridge Pipe, no code)
+   - Reads new tickets (`INSERT`s) from the table's DynamoDB stream and puts each one on the SQS queue
+   - One write in the receiver means a ticket can't be stored without also being queued
+
+3. **Fetch Support Ticket** (`fetch-support-ticket.ts`)
    - Receives GET requests at `/support-request?ticketId=<id>`
    - Retrieves ticket information from DynamoDB
-   - Returns the AI-generated response for the ticket
+   - Returns the ticket's status, and the AI-generated reply once it's processed
 
-3. **Support Request Processor** (`support-request-processor.ts`)
-   - Processes tickets from SQS queue
-   - Uses AWS Bedrock (Amazon Nova Lite) to analyze ticket urgency and generate responses
-   - Updates tickets in DynamoDB with analytics
+4. **Support Request Processor** (`support-request-processor.ts`)
+   - Processes tickets from the SQS queue (each message is one DynamoDB stream record)
+   - Uses AWS Bedrock (Amazon Nova Lite) to decide the urgency and draft a reply
+   - Retries transient failures, and marks a ticket `FAILED` on permanent ones
+   - Updates the ticket in DynamoDB (once, even if SQS delivers it twice)
    - Sends notifications to support team via SNS
-   - Logs errors to a dedicated CloudWatch log group for monitoring
 
 ### AWS Resources
 
 - **API Gateway**: HTTP API with endpoints for creating and fetching support tickets
 - **Lambda Functions**: Three functions for receiving, fetching, and processing tickets
-- **DynamoDB**: Ticket storage with server-side encryption
+- **DynamoDB**: Ticket storage with server-side encryption, and a stream of changes
+- **EventBridge Pipes**: Moves new tickets from the stream to the queue, with its own dead-letter queue
 - **SQS**: Queue with dead-letter queue for reliable processing
 - **SNS**: Topics for ticket notifications and error alerts
 - **CloudWatch**: Log groups, metric filters, and alarms for monitoring and alerting
@@ -224,8 +228,6 @@ sam delete --stack-name triage-desk
 
 **Advanced Error Handling & Retry Logic**
 - Implement retry logic with exponential backoff for transient failures (Bedrock API, DynamoDB throttling)
-- Add partial batch failure handling for SQS processing using `reportBatchItemFailures`
-- Create custom error classes for better error categorization and handling
 
 **Additional Monitoring & Observability**
 - Add custom CloudWatch metrics for ticket processing success rates and latency

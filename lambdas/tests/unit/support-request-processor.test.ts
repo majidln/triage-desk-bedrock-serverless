@@ -20,15 +20,24 @@ const ddbMock = mockClient(DynamoDBDocumentClient);
 const bedrockMock = mockClient(BedrockRuntimeClient);
 const snsMock = mockClient(SNSClient);
 
-// The example record used with `sam local invoke`, copied with its own messageId and ticketId.
-function exampleRecord(n: number): SQSRecord {
+// The example record used with `sam local invoke`: one SQS message holding one DynamoDB
+// stream record, as the intake pipe sends it.
+function sampleRecord(): SQSRecord {
     const path = join(__dirname, '../../../events/sqs-event.json');
-    const record = (JSON.parse(readFileSync(path, 'utf8')) as SQSEvent).Records[0];
-    return {
-        ...record,
-        messageId: `msg-${n}`,
-        body: JSON.stringify({ ticketId: `ticket-${n}`, content: `Question ${n}` }),
-    };
+    return (JSON.parse(readFileSync(path, 'utf8')) as SQSEvent).Records[0];
+}
+
+// The example record, for a different ticket and with its own messageId.
+function exampleRecord(n: number): SQSRecord {
+    return { ...sampleRecord(), messageId: `msg-${n}`, body: ticketMessage(`ticket-${n}`, `Question ${n}`) };
+}
+
+// A stream record body for a new ticket, built from the example so it keeps the real shape.
+function ticketMessage(ticketId: string, content: string): string {
+    const record = JSON.parse(sampleRecord().body);
+    record.dynamodb.Keys = marshall({ id: ticketId });
+    record.dynamodb.NewImage = { ...record.dynamodb.NewImage, ...marshall({ id: ticketId, content }) };
+    return JSON.stringify(record);
 }
 
 // A Nova response body, as InvokeModel returns it.
@@ -207,9 +216,9 @@ describe('support-request-processor', () => {
             .resolvesOnce(novaResponse({ urgency: 'HIGH', response: reply }))
             .rejectsOnce(new ThrottlingException(sdkError));
         ddbMock.on(UpdateCommand).resolves({});
-        const record = { ...exampleRecord(1), body: JSON.stringify({ ticketId: 'ticket-1', content: secret }) };
+        const record = { ...exampleRecord(1), body: ticketMessage('ticket-1', secret) };
         const poisoned = { ...exampleRecord(2), body: `not json: ${secret}` };
-        const throttled = { ...exampleRecord(3), body: JSON.stringify({ ticketId: 'ticket-3', content: secret }) };
+        const throttled = { ...exampleRecord(3), body: ticketMessage('ticket-3', secret) };
         const spies = (['debug', 'info', 'warn', 'error'] as const).map((level) => jest.spyOn(logger, level));
         const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
@@ -297,6 +306,29 @@ describe('support-request-processor', () => {
             const result = await handler({ Records: [exampleRecord(1)] }, contextWithRemaining(35_000));
 
             expect(result).toEqual({ batchItemFailures: [] });
+        });
+    });
+
+    describe('reading the stream record', () => {
+        it('processes the example event as the intake pipe sends it', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await expect(processRecord(sampleRecord())).resolves.toBe('processed');
+
+            const [save] = guardedUpdates();
+            expect(save.Key).toEqual({ id: '11111111-2222-3333-4444-555555555555' });
+            const prompt = JSON.parse(bedrockMock.commandCalls(InvokeModelCommand)[0].args[0].input.body as string);
+            expect(prompt.messages[0].content[0].text).toContain('How do I invite a teammate to my board?');
+        });
+
+        it.each([
+            ['the old hand-made message', JSON.stringify({ ticketId: 'ticket-1', content: 'Question 1' })],
+            ['a record without a NewImage', JSON.stringify({ eventName: 'INSERT', dynamodb: {} })],
+            ['a record without content', JSON.stringify({ dynamodb: { NewImage: marshall({ id: 'ticket-1' }) } })],
+            ['JSON null', 'null'],
+        ])('drops %s without calling Bedrock', async (_label, body) => {
+            await expect(processRecord({ ...sampleRecord(), body })).resolves.toBe('dropped');
+            expect(bedrockMock.commandCalls(InvokeModelCommand)).toHaveLength(0);
         });
     });
 });

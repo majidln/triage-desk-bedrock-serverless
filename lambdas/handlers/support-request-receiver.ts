@@ -1,7 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { PutCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { v4 as uuidv4 } from 'uuid';
 import { TicketStatus, CreateTicketRequest, CreateTicketResponse } from '../shared/types';
 import { requireEnv } from '../shared/env';
@@ -11,12 +10,10 @@ import { logger } from '../shared/logger';
 // Read once at cold start: a missing variable fails here, not on the first request.
 const config = {
     tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
-    queueUrl: requireEnv('SUPPORT_REQUEST_QUEUE'),
 };
 
 const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
-const sqsClient = new SQSClient({});
 
 export const handler = async (
     event: APIGatewayProxyEventV2,
@@ -35,6 +32,8 @@ export const handler = async (
         const customerId = parsed.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
         const now = new Date().toISOString();
 
+        // The only write: the table's stream and the intake pipe put the ticket on the queue,
+        // so there's no second step that could fail and leave the ticket stuck in RECEIVED.
         await docClient.send(
             new PutCommand({
                 TableName: config.tableName,
@@ -46,13 +45,6 @@ export const handler = async (
                     updatedAt: now,
                     customerId,
                 },
-            }),
-        );
-
-        await sqsClient.send(
-            new SendMessageCommand({
-                QueueUrl: config.queueUrl,
-                MessageBody: JSON.stringify({ ticketId, content: parsed.content }),
             }),
         );
 

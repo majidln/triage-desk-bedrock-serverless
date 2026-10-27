@@ -109,7 +109,13 @@ The receiver writes to DynamoDB, then sends to SQS (G4). If the send fails, the 
 There are a few honest options. Pick one and write down why:
 - **Send to SQS first, then write to DynamoDB.** The processor must then cope with a ticket whose row doesn't exist yet.
 - **Write, send, and on send failure mark the ticket `FAILED`.** That's simple, and the customer gets an error.
-- **DynamoDB Streams, or EventBridge Pipes from the table to the queue.** No dual write at all, but it's more infrastructure. Probably too much for this step; note it for later.
+- **DynamoDB Streams, or EventBridge Pipes from the table to the queue.** No dual write at all, but it's more infrastructure.
+
+**Chosen: a DynamoDB stream and an EventBridge Pipe.** The receiver only writes the ticket; the pipe reads `INSERT`s from the table's stream and puts each one on the queue. The other two options leave a gap: sending first races the processor's "ticket not found" check, and marking `FAILED` on a failed send can itself fail. Things to get right:
+- **Filter on `INSERT`.** The processor's own updates are `MODIFY` records; without the filter they would queue every ticket again.
+- **`StartingPosition: TRIM_HORIZON`**, not `LATEST`: a new pipe takes minutes to start polling and could miss tickets written meanwhile.
+- **The message is now a stream record**, so the processor reads the ticket from `dynamodb.NewImage`.
+- **The pipe has its own DLQ** for batches it gives up on; the tickets stay in the table as `RECEIVED`. Alarm on it (section 8).
 
 Also: invalid JSON must return `400`, not `500`. Parse it in its own try/catch.
 

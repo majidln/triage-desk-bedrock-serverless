@@ -36,14 +36,11 @@ Resources:
             Path: /support-request
             Method: post
       Policies:
-        - DynamoDBCrudPolicy:
+        - DynamoDBWritePolicy:
             TableName: !Ref SupportTicketTable
-        - SQSSendMessagePolicy:
-            QueueName: !GetAtt SupportRequestQueue.QueueName
       Environment:
         Variables:
           SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
-          SUPPORT_REQUEST_QUEUE: !GetAtt SupportRequestQueue.QueueUrl
           POWERTOOLS_SERVICE_NAME: triage-receiver
           POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
@@ -150,6 +147,9 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true
+      # Every change to a ticket, kept for 24 h. The intake pipe reads new tickets from it.
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
 
   SupportRequestQueue:
     Type: AWS::SQS::Queue
@@ -173,6 +173,73 @@ Resources:
     UpdateReplacePolicy: Delete
     Properties:
       QueueName: !Sub '${AWS::StackName}-RequestDLQ'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # Moves each new ticket from the table's stream to the queue. The receiver only writes
+  # the ticket: one write, so a ticket can't be stored without also reaching the queue.
+  TicketIntakePipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: !Sub '${AWS::StackName}-ticket-intake'
+      RoleArn: !GetAtt TicketIntakePipeRole.Arn
+      Source: !GetAtt SupportTicketTable.StreamArn
+      SourceParameters:
+        DynamoDBStreamParameters:
+          # Not LATEST: a new pipe takes minutes to start polling and would miss tickets
+          StartingPosition: TRIM_HORIZON
+          BatchSize: 10
+          MaximumRetryAttempts: 10
+          DeadLetterConfig:
+            Arn: !GetAtt TicketIntakeDLQ.Arn
+        # Only new tickets. The processor's own updates (MODIFY) must not queue the ticket again.
+        FilterCriteria:
+          Filters:
+            - Pattern: '{"eventName": ["INSERT"]}'
+      # Each stream record becomes one SQS message
+      Target: !GetAtt SupportRequestQueue.Arn
+
+  TicketIntakePipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pipes.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ticket-intake
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                Resource: !GetAtt SupportTicketTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:ListStreams
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt SupportRequestQueue.Arn
+                  - !GetAtt TicketIntakeDLQ.Arn
+
+  # Batches the pipe gave up on. The tickets themselves stay in the table as RECEIVED.
+  TicketIntakeDLQ:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-IntakeDLQ'
       MessageRetentionPeriod: 1209600  # 14 days
 
   SupportTicketNotificationTopic:

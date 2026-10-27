@@ -3,7 +3,7 @@
     {
       "messageId": "19dd0b57-b21e-4ac1-bd88-01bbb068cb78",
       "receiptHandle": "MessageReceiptHandle",
-      "body": "{\"ticketId\":\"11111111-2222-3333-4444-555555555555\",\"content\":\"How do I invite a teammate to my board?\"}",
+      "body": "{\"eventID\": \"c4ca4238a0b923820dcc509a6f75849b\", \"eventName\": \"INSERT\", \"eventVersion\": \"1.1\", \"eventSource\": \"aws:dynamodb\", \"awsRegion\": \"us-east-1\", \"dynamodb\": {\"ApproximateCreationDateTime\": 1793095200, \"Keys\": {\"id\": {\"S\": \"11111111-2222-3333-4444-555555555555\"}}, \"NewImage\": {\"id\": {\"S\": \"11111111-2222-3333-4444-555555555555\"}, \"content\": {\"S\": \"How do I invite a teammate to my board?\"}, \"status\": {\"S\": \"RECEIVED\"}, \"customerId\": {\"S\": \"customer-id-from-api-gateway\"}, \"createdAt\": {\"S\": \"2026-10-27T10:00:00.000Z\"}, \"updatedAt\": {\"S\": \"2026-10-27T10:00:00.000Z\"}}, \"SequenceNumber\": \"100000000000000000001\", \"SizeBytes\": 220, \"StreamViewType\": \"NEW_IMAGE\"}, \"eventSourceARN\": \"arn:aws:dynamodb:us-east-1:123456789012:table/triage-desk-Table/stream/2026-10-27T00:00:00.000\"}",
       "attributes": {
         "ApproximateReceiveCount": "1",
         "SentTimestamp": "1523232000000",
@@ -11,7 +11,6 @@
         "ApproximateFirstReceiveTimestamp": "1523232000001"
       },
       "messageAttributes": {},
-      "md5OfBody": "7b270e59b47ff90a553787216d55d91d",
       "eventSource": "aws:sqs",
       "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:triage-desk-RequestQueue",
       "awsRegion": "us-east-1"

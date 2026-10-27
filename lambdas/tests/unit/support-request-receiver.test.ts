@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -11,7 +10,6 @@ import { handler } from '../../handlers/support-request-receiver';
 jest.mock('uuid', () => ({ v4: () => 'test-ticket-id' }));
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
-const sqsMock = mockClient(SQSClient);
 
 const lambdaContext = { functionName: 'triage-desk-ReceiverFunction', awsRequestId: 'test-request-id' } as Context;
 
@@ -28,7 +26,6 @@ function withBody(body: string | undefined): APIGatewayProxyEventV2 {
 describe('support-request-receiver', () => {
     beforeEach(() => {
         ddbMock.reset();
-        sqsMock.reset();
     });
 
     it.each([
@@ -40,16 +37,15 @@ describe('support-request-receiver', () => {
         ['no content', '{}', 'content is required'],
         ['a number as content', '{"content": 42}', 'content is required'],
         ['blank content', '{"content": "   "}', 'content is required'],
-    ])('returns 400 for %s, and touches neither DynamoDB nor SQS', async (_label, body, message) => {
+    ])('returns 400 for %s, without writing the ticket', async (_label, body, message) => {
         const result = await handler(withBody(body), lambdaContext);
 
         expect(result.statusCode).toBe(400);
         expect(JSON.parse(result.body!)).toEqual({ message });
         expect(ddbMock.calls()).toHaveLength(0);
-        expect(sqsMock.calls()).toHaveLength(0);
     });
 
-    it('stores and queues the ticket from the example event', async () => {
+    it('stores the ticket from the example event, in one write', async () => {
         const result = await handler(exampleEvent(), lambdaContext);
 
         expect(result.statusCode).toBe(202);
@@ -64,9 +60,8 @@ describe('support-request-receiver', () => {
             content: 'How do I invite a teammate to my board?',
         });
         expect(put.Item?.createdAt).toBe(put.Item?.updatedAt);
-
-        const sent = sqsMock.commandCalls(SendMessageCommand)[0].args[0].input;
-        expect(JSON.parse(sent.MessageBody!)).toEqual({ ticketId, content: 'How do I invite a teammate to my board?' });
+        // The table's stream and the intake pipe queue it: the receiver makes no other call
+        expect(ddbMock.calls()).toHaveLength(1);
     });
 
     it('returns 500 when DynamoDB fails', async () => {
@@ -75,6 +70,5 @@ describe('support-request-receiver', () => {
         const result = await handler(exampleEvent(), lambdaContext);
 
         expect(result.statusCode).toBe(500);
-        expect(sqsMock.calls()).toHaveLength(0);
     });
 });
