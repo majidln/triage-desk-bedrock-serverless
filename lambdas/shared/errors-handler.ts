@@ -1,9 +1,24 @@
-import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, PutLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
+import {
+    CloudWatchLogsClient,
+    CreateLogGroupCommand,
+    CreateLogStreamCommand,
+    PutLogEventsCommand,
+} from '@aws-sdk/client-cloudwatch-logs';
 
 const logsClient = new CloudWatchLogsClient({});
 const LOG_GROUP_NAME = process.env.ERROR_LOG_GROUP_NAME || '';
 
-export async function logBedrockTicketProcessorError(ticketId: String, error: any, context: Record<string, any> = {}): Promise<void> {
+export async function logBedrockTicketProcessorError(
+    ticketId: string,
+    err: unknown,
+    context: Record<string, unknown> = {},
+): Promise<void> {
+    const error = err as {
+        name?: string;
+        message?: string;
+        stack?: string;
+        $metadata?: { requestId?: string; httpStatusCode?: number };
+    } | null;
     const errorLog = {
         timestamp: new Date().toISOString(),
         level: 'ERROR',
@@ -13,16 +28,16 @@ export async function logBedrockTicketProcessorError(ticketId: String, error: an
             name: error?.name || 'UnknownError',
             message: error?.message || String(error),
             stack: error?.stack,
-            ...(error?.$metadata && { 
+            ...(error?.$metadata && {
                 requestId: error.$metadata.requestId,
-                httpStatusCode: error.$metadata.httpStatusCode 
-            })
+                httpStatusCode: error.$metadata.httpStatusCode,
+            }),
         },
         context: {
             ...context,
-            bedrockModelId: process.env.BEDROCK_MODEL_ID
+            bedrockModelId: process.env.BEDROCK_MODEL_ID,
         },
-        environment: process.env.STAGE_NAME || 'dev'
+        environment: process.env.STAGE_NAME || 'dev',
     };
 
     try {
@@ -30,7 +45,7 @@ export async function logBedrockTicketProcessorError(ticketId: String, error: an
         if (LOG_GROUP_NAME) {
             await writeToCustomLogGroup(LOG_GROUP_NAME, errorLog);
         }
-        
+
         // Also log to default log group for visibility
         console.error(JSON.stringify(errorLog));
     } catch (logError) {
@@ -40,46 +55,50 @@ export async function logBedrockTicketProcessorError(ticketId: String, error: an
     }
 }
 
-async function writeToCustomLogGroup(logGroupName: string, logEntry: any): Promise<void> {
+// Errors reach the caller, which falls back to console.error.
+async function writeToCustomLogGroup(logGroupName: string, logEntry: object): Promise<void> {
     const logStreamName = `errors-${new Date().toISOString().split('T')[0]}`; // Daily log stream
-    
+
+    // Ensure log group exists
     try {
-        // Ensure log group exists
-        try {
-            await logsClient.send(new CreateLogGroupCommand({
-                logGroupName
-            }));
-        } catch (err: any) {
-            // Log group might already exist, which is fine
-            if (err.name !== 'ResourceAlreadyExistsException') {
-                throw err;
-            }
-        }
-
-        // Try to get or create log stream
-        try {
-            await logsClient.send(new CreateLogStreamCommand({
+        await logsClient.send(
+            new CreateLogGroupCommand({
                 logGroupName,
-                logStreamName
-            }));
-        } catch (err: any) {
-            // Log stream might already exist, which is fine
-            if (err.name !== 'ResourceAlreadyExistsException') {
-                throw err;
-            }
+            }),
+        );
+    } catch (err) {
+        // Log group might already exist, which is fine
+        if ((err as Error).name !== 'ResourceAlreadyExistsException') {
+            throw err;
         }
+    }
 
-        // Put log event
-        await logsClient.send(new PutLogEventsCommand({
+    // Try to get or create log stream
+    try {
+        await logsClient.send(
+            new CreateLogStreamCommand({
+                logGroupName,
+                logStreamName,
+            }),
+        );
+    } catch (err) {
+        // Log stream might already exist, which is fine
+        if ((err as Error).name !== 'ResourceAlreadyExistsException') {
+            throw err;
+        }
+    }
+
+    // Put log event
+    await logsClient.send(
+        new PutLogEventsCommand({
             logGroupName,
             logStreamName,
-            logEvents: [{
-                timestamp: Date.now(),
-                message: JSON.stringify(logEntry)
-            }]
-        }));
-    } catch (err) {
-        // If writing fails, we'll fall back to console.error in the caller
-        throw err;
-    }
+            logEvents: [
+                {
+                    timestamp: Date.now(),
+                    message: JSON.stringify(logEntry),
+                },
+            ],
+        }),
+    );
 }

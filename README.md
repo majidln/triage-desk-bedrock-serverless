@@ -82,6 +82,14 @@ sam local invoke FetchSupportRequestFunction --event events/fetch-ticket.json
 sam local invoke SupportRequestProcessorFunction --event events/sqs-event.json
 ```
 
+Formatting and linting cover `lambdas/` and `eval/` from one config at the repo root (Prettier for layout, ESLint with typescript-eslint for code issues):
+
+```bash
+npm install          # once, at the repo root
+npm run format       # rewrite files into the shared style
+npm run check        # what CI would run: format check + lint
+```
+
 ## Project Structure
 
 ```

@@ -1,9 +1,9 @@
 // Part 4: Bedrock token usage from CloudWatch, and the cost per ticket.
 // The only file that knows about CloudWatch.
 
-import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
-import { MINUTE_MS, PRICE_PER_M_INPUT, PRICE_PER_M_OUTPUT, REGION } from "./config.ts";
-import { ratio } from "./util.ts";
+import { CloudWatchClient, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
+import { MINUTE_MS, PRICE_PER_M_INPUT, PRICE_PER_M_OUTPUT, REGION } from './config.ts';
+import { ratio } from './util.ts';
 
 const cloudwatch = new CloudWatchClient({ region: REGION });
 
@@ -21,13 +21,13 @@ export interface BedrockUsage {
 export async function sumMetric(metric: string, modelId: string, start: Date, end: Date): Promise<number> {
     const res = await cloudwatch.send(
         new GetMetricStatisticsCommand({
-            Namespace: "AWS/Bedrock",
+            Namespace: 'AWS/Bedrock',
             MetricName: metric,
-            Dimensions: [{ Name: "ModelId", Value: modelId }],
+            Dimensions: [{ Name: 'ModelId', Value: modelId }],
             StartTime: start,
             EndTime: end,
             Period: 60,
-            Statistics: ["Sum"],
+            Statistics: ['Sum'],
         }),
     );
     return (res.Datapoints ?? []).reduce((sum, d) => sum + (d.Sum ?? 0), 0);
@@ -38,7 +38,7 @@ export async function bedrockUsage(modelId: string, start: Date, end: Date): Pro
     const from = new Date(Math.floor(start.getTime() / MINUTE_MS) * MINUTE_MS);
     const to = new Date(Math.ceil(end.getTime() / MINUTE_MS) * MINUTE_MS);
     const [invocations, inputTokens, outputTokens, throttles] = await Promise.all(
-        ["Invocations", "InputTokenCount", "OutputTokenCount", "InvocationThrottles"].map((m) =>
+        ['Invocations', 'InputTokenCount', 'OutputTokenCount', 'InvocationThrottles'].map((m) =>
             sumMetric(m, modelId, from, to),
         ),
     );
@@ -57,12 +57,11 @@ export async function waitForUsage(modelId: string, start: Date, end: Date): Pro
         if (next.invocations > 0 && next.invocations === usage.invocations) break;
         usage = next;
     }
-    process.stdout.write("\n");
+    process.stdout.write('\n');
     return usage;
 }
 
 export function costPerTicket(usage: BedrockUsage, tickets: number): number {
-    const cost =
-        (usage.inputTokens * PRICE_PER_M_INPUT + usage.outputTokens * PRICE_PER_M_OUTPUT) / 1_000_000;
+    const cost = (usage.inputTokens * PRICE_PER_M_INPUT + usage.outputTokens * PRICE_PER_M_OUTPUT) / 1_000_000;
     return ratio(cost, tickets);
 }

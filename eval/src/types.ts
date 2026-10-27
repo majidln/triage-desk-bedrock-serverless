@@ -1,6 +1,6 @@
 // Shared types for the evaluation runner.
 
-export type Urgency = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type Urgency = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Ticket {
     id: string;
@@ -26,7 +26,7 @@ export interface Submission {
 //   fallback       v0 stored its canned reply because Bedrock failed (gap G1)
 //   timeout        not PROCESSED before the deadline
 //   not-submitted  part 1 never got a ticket id
-export type Outcome = "processed" | "fallback" | "timeout" | "not-submitted";
+export type Outcome = 'processed' | 'fallback' | 'timeout' | 'not-submitted';
 
 export interface Collected {
     submission: Submission;

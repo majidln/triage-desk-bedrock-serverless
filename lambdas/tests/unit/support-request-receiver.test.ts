@@ -44,7 +44,11 @@ describe('support-request-receiver', () => {
         expect(ticketId).toBe('test-ticket-id');
 
         const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
-        expect(put.Item).toMatchObject({ id: ticketId, status: 'RECEIVED', content: 'How do I invite a teammate to my board?' });
+        expect(put.Item).toMatchObject({
+            id: ticketId,
+            status: 'RECEIVED',
+            content: 'How do I invite a teammate to my board?',
+        });
 
         const sent = sqsMock.commandCalls(SendMessageCommand)[0].args[0].input;
         expect(JSON.parse(sent.MessageBody!)).toEqual({ ticketId, content: 'How do I invite a teammate to my board?' });

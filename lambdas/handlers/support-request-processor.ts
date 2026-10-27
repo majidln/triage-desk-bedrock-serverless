@@ -1,10 +1,10 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { SQSEvent } from "aws-lambda";
-import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
-import { TicketStatus, SupportTicketMessage, TicketAnalytics, Urgency } from "../shared/types";
-import { logBedrockTicketProcessorError } from "../shared/errors-handler";
-import { PublishCommand, SNSClient } from "@aws-sdk/client-sns";
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { SQSEvent } from 'aws-lambda';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { TicketStatus, SupportTicketMessage, TicketAnalytics, Urgency } from '../shared/types';
+import { logBedrockTicketProcessorError } from '../shared/errors-handler';
+import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 
 const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
@@ -62,25 +62,23 @@ Respond in JSON format:
         body: JSON.stringify({
             messages: [
                 {
-                    role: "user",
-                    content: [
-                        { text: prompt }
-                    ]
-                }
+                    role: 'user',
+                    content: [{ text: prompt }],
+                },
             ],
             inferenceConfig: {
                 max_new_tokens: 512,
                 temperature: 0.1,
-                top_p: 0.9
-            }
-        })
+                top_p: 0.9,
+            },
+        }),
     };
 
     try {
         const command = new InvokeModelCommand(input);
         const response = await bedrockClient.send(command);
         const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-        
+
         // Nova returns content in this structure
         const resultText = responseBody.output.message.content[0].text.trim();
 
@@ -88,8 +86,8 @@ Respond in JSON format:
         if (jsonMatch) {
             const result = JSON.parse(jsonMatch[0]);
             return {
-                urgency: result.urgency as Urgency || Urgency.MEDIUM,
-                response: result.response || 'Thank you for contacting support.'
+                urgency: (result.urgency as Urgency) || Urgency.MEDIUM,
+                response: result.response || 'Thank you for contacting support.',
             };
         }
         throw new Error('Could not parse JSON from response');
@@ -97,13 +95,13 @@ Respond in JSON format:
         await logBedrockTicketProcessorError(message.ticketId, err, {
             modelId,
             promptLength: prompt.length,
-            ticketContent: message.content.substring(0, 200)
+            ticketContent: message.content.substring(0, 200),
         });
-        
+
         // Return fallback response
         return {
             urgency: Urgency.MEDIUM,
-            response: 'Thank you for contacting support. We have received your request and will get back to you soon.'
+            response: 'Thank you for contacting support. We have received your request and will get back to you soon.',
         };
     }
 }
@@ -126,8 +124,8 @@ async function updateTheTicket(message: SupportTicketMessage, analytics: TicketA
                     ...analytics,
                     generatedAt: new Date().toISOString(),
                 },
-            }
-        })
+            },
+        });
         await docClient.send(updateCommand);
     } catch (err) {
         console.log(`Error processing ticket ${message.ticketId}: ${err}`);

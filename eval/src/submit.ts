@@ -1,14 +1,14 @@
 // Part 1: submit every ticket to the API, a few at a time.
 
-import { API_URL, CONCURRENCY } from "./config.ts";
-import type { Submission, Ticket } from "./types.ts";
+import { API_URL, CONCURRENCY } from './config.ts';
+import type { Submission, Ticket } from './types.ts';
 
 export async function submitTicket(ticket: Ticket): Promise<Submission> {
     const start = performance.now();
     try {
         const res = await fetch(`${API_URL}/support-request`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             // Only the content: the pipeline must never see the answer key.
             body: JSON.stringify({ content: ticket.content }),
             signal: AbortSignal.timeout(10_000),
@@ -21,7 +21,7 @@ export async function submitTicket(ticket: Ticket): Promise<Submission> {
         }
         const body = JSON.parse(text) as { ticketId?: string };
         if (!body.ticketId) {
-            return { ticket, status: res.status, ackMs, error: "202 without ticketId" };
+            return { ticket, status: res.status, ackMs, error: '202 without ticketId' };
         }
         return { ticket, ticketId: body.ticketId, status: res.status, ackMs };
     } catch (err) {
@@ -40,11 +40,11 @@ export async function submitAll(tickets: Ticket[]): Promise<Submission[]> {
         while (next < tickets.length) {
             const i = next++;
             results[i] = await submitTicket(tickets[i]);
-            process.stdout.write(results[i].ticketId ? "." : "x");
+            process.stdout.write(results[i].ticketId ? '.' : 'x');
         }
     }
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tickets.length) }, worker));
-    process.stdout.write("\n");
+    process.stdout.write('\n');
     return results;
 }

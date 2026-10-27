@@ -1,0 +1,9 @@
+# Prettier also skips everything in .gitignore (node_modules, coverage, .aws-sam).
+package-lock.json
+eval/reports/
+
+# Code only: docs, the eval set and the SAM template keep their hand-written layout.
+*.md
+*.yaml
+*.yml
+*.jsonl
