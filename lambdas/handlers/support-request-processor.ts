@@ -6,7 +6,7 @@ import { TicketStatus, SupportTicket, SupportTicketMessage, TicketTriage, Ticket
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
-import { invokeTriageModel } from '../shared/triage-model';
+import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
 import { logger } from '../shared/logger';
 
 // Read once at cold start: a missing variable fails here, not on the first ticket.
@@ -15,6 +15,10 @@ const config = {
     topicArn: requireEnv('SNS_TOPIC_ARN'),
     modelId: requireEnv('BEDROCK_MODEL_ID'),
 };
+
+// The longest one ticket can take: every model attempt timing out, plus a few seconds for
+// the SDK's backoff, DynamoDB and SNS. A ticket is only started with at least this much left.
+const TICKET_BUDGET_MS = MODEL_ATTEMPT_TIMEOUT_MS * MODEL_MAX_ATTEMPTS + 5_000;
 
 const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
@@ -37,6 +41,14 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
     const batchItemFailures: SQSBatchItemFailure[] = [];
 
     for (const record of event.Records) {
+        // If Lambda stops us at its timeout, nothing is returned and SQS retries the whole
+        // batch. So rather than start a ticket we may not finish, hand it back and return.
+        const remainingMs = context.getRemainingTimeInMillis();
+        if (remainingMs < TICKET_BUDGET_MS) {
+            logger.warn('RecordDeferred', { messageId: record.messageId, remainingMs });
+            batchItemFailures.push({ itemIdentifier: record.messageId });
+            continue;
+        }
         try {
             await processRecord(record);
         } catch (err) {

@@ -5,7 +5,15 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 import { PermanentError } from './classify-error';
 import { TicketTriage, Urgency } from './types';
 
-const bedrockClient = new BedrockRuntimeClient({});
+// Limits for one model call. Nova Lite answers a ticket in about 1–3 s, so 15 s per attempt
+// is generous; without a limit a hanging call would use up the whole Lambda timeout.
+export const MODEL_ATTEMPT_TIMEOUT_MS = 15_000;
+export const MODEL_MAX_ATTEMPTS = 2;
+
+const bedrockClient = new BedrockRuntimeClient({
+    maxAttempts: MODEL_MAX_ATTEMPTS,
+    requestHandler: { requestTimeout: MODEL_ATTEMPT_TIMEOUT_MS },
+});
 
 // Asks the model to triage one ticket. Bedrock errors are thrown as they are, and an
 // answer we can't use is thrown as a PermanentError; the caller decides what to retry.

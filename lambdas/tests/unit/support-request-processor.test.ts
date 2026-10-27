@@ -41,11 +41,19 @@ function novaResponse(answer: object) {
     return novaText(JSON.stringify(answer));
 }
 
-// Just enough of a Lambda context for the logger.
-const lambdaContext = {
-    functionName: 'triage-desk-ProcessorFunction',
-    awsRequestId: 'test-request-id',
-} as Context;
+// Just enough of a Lambda context for the logger and the time check: a fresh 60 s invocation.
+const lambdaContext = contextWithRemaining(60_000);
+
+function contextWithRemaining(...remainingMs: number[]): Context {
+    const clock = jest.fn<() => number>();
+    remainingMs.forEach((ms) => clock.mockReturnValueOnce(ms));
+    clock.mockReturnValue(remainingMs[remainingMs.length - 1]);
+    return {
+        functionName: 'triage-desk-ProcessorFunction',
+        awsRequestId: 'test-request-id',
+        getRemainingTimeInMillis: clock,
+    } as unknown as Context;
+}
 
 // The status changes (RECEIVED → PROCESSED or FAILED), not the notifiedAt writes.
 function guardedUpdates() {
@@ -267,6 +275,28 @@ describe('support-request-processor', () => {
 
             await expect(processRecord(exampleRecord(1))).resolves.toBe('dropped');
             expect(snsMock.commandCalls(PublishCommand)).toHaveLength(0);
+        });
+    });
+
+    describe('time check', () => {
+        it("hands back a ticket it can't finish before the Lambda timeout, without starting it", async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+            const event: SQSEvent = { Records: [exampleRecord(1), exampleRecord(2), exampleRecord(3)] };
+
+            // 60 s left for the first ticket, then only 20 s: not enough for a worst-case ticket
+            const result = await handler(event, contextWithRemaining(60_000, 20_000));
+
+            expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-2' }, { itemIdentifier: 'msg-3' }] });
+            expect(bedrockMock.commandCalls(InvokeModelCommand)).toHaveLength(1);
+            expect(snsMock.commandCalls(PublishCommand)).toHaveLength(1);
+        });
+
+        it('starts a ticket with exactly the worst-case budget left (35 s)', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const result = await handler({ Records: [exampleRecord(1)] }, contextWithRemaining(35_000));
+
+            expect(result).toEqual({ batchItemFailures: [] });
         });
     });
 });

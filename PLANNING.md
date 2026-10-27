@@ -133,6 +133,11 @@ Every step moves at least one of these. The steps refer to them by ID.
 | **Async** | SQS between intake and the model, so a slow or throttled model never slows down the API |
 | **Evaluation** | One fixed set of labeled tickets that every step re-runs unchanged. It's changed only to fix a wrong label, and that change is recorded |
 | **Safe by default** | Until Step 6 settles it, the AI reply is a *draft*. CRITICAL tickets always go to a person |
+| **Model call limits** (Step 1) | 15 s per attempt, 2 attempts. Nova Lite answers in ~1–3 s; without a limit, one hanging call uses up the whole Lambda timeout. Worst case per ticket: ~35 s |
+| **Batch size** (Step 1) | 5. Records run one after another, so the last ticket in a batch waits ~12 s (10 would be ~27 s, against the p95 < 30 s target). 1 would mean one invocation per ticket, and more parallel Bedrock calls |
+| **Processor timeout** (Step 1) | 60 s: a batch of 5 takes ~15 s. The handler stops starting tickets with less than 35 s left and hands them back, so it always returns before Lambda stops it (a timed-out invocation retries the whole batch) |
+| **Visibility timeout** (Step 1) | 360 s, 6 × the processor timeout, as AWS recommends, so SQS doesn't lend a message to a second invocation while the first may still be working on it |
+| **maxReceiveCount** (Step 1) | 5: ~30 min of retries (5 × 6 min) rides out a short Bedrock outage, and absorbs handed-back tickets, before the DLQ |
 
 ---
 

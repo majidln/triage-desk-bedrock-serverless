@@ -89,6 +89,8 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ProcessorFunction'
       Handler: handlers/support-request-processor.handler
+      # A batch of 5 takes ~15 s; 60 s leaves room for slow model calls (see PLANNING.md §3)
+      Timeout: 60
       Architectures:
       - x86_64
       Events:
@@ -96,7 +98,7 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt SupportRequestQueue.Arn
-            BatchSize: 10
+            BatchSize: 5
             FunctionResponseTypes:
               - ReportBatchItemFailures
       Policies:
@@ -151,12 +153,15 @@ Resources:
     UpdateReplacePolicy: Delete
     Properties:
       QueueName: !Sub '${AWS::StackName}-RequestQueue'
-      VisibilityTimeout: 30
+      # At least 6 x the processor's 60 s timeout, so SQS never lends a message to a second
+      # invocation while the first may still be working on it
+      VisibilityTimeout: 360
       MessageRetentionPeriod: 1209600  # 14 days in seconds
       ReceiveMessageWaitTimeSeconds: 20  # Long polling
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt SupportRequestDLQ.Arn
-        maxReceiveCount: 3
+        # ~30 min of retries (5 x 6 min) rides out a short Bedrock outage before the DLQ
+        maxReceiveCount: 5
 
   SupportRequestDLQ:
     Type: AWS::SQS::Queue
