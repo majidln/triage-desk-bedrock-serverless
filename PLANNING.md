@@ -13,7 +13,7 @@ Out of scope: email or chat intake, languages other than English, CRM integratio
 | Step | What | Status | Tag | Cost at rest |
 |---|---|---|---|---|
 | v0 | The naive LLM call | Done | `v0-naive-llm-call` | Free |
-| 0 | Baseline and evaluation set | Not started | | Free |
+| 0 | Baseline and evaluation set | Done | `step-0-complete` | Free |
 | 1 | Reliability | Not started | | Free |
 | 2 | Structured output with the Converse API | Not started | | Free |
 | 3 | Guardrails and security | Not started | | Free (Guardrails bill per request) |
@@ -114,9 +114,9 @@ Every step moves at least one of these. The steps refer to them by ID.
 
 - [ ] AWS account, a non-root IAM identity, a budget alarm.
 - [x] AWS CLI and **SAM CLI** installed.
-- [ ] **Node.js 22+**. The functions run on `nodejs24.x`.
+- [x] **Node.js 22+**. The functions run on `nodejs24.x`. *(Node 22 locally)*
 - [ ] Docker for `sam local`.
-- [ ] **Bedrock model access** in `us-east-1` for Nova Lite, and later Nova Pro and Claude Haiku (Step 5).
+- [ ] **Bedrock model access** in `us-east-1` for Nova Lite, and later Nova Pro and Claude Haiku (Step 5). *(Nova Lite works; the others are for Step 5)*
 - [ ] An email address subscribed to both SNS topics.
 
 ---
@@ -160,22 +160,25 @@ The evaluation set is a fixed exam: `content` is the only field sent to the pipe
 Read the results with their size in mind: with 8 CRITICAL tickets, one miss moves CRITICAL recall by 12.5 points.
 
 **Exit:**
-- [ ] Rubric and facts sheet written; evaluation set committed, with every urgency level and at least 6 red-team tickets.
-- [ ] Evaluation script runs end to end against the deployed stack.
-- [ ] v0 row recorded in [RESULTS.md](RESULTS.md): accuracy, CRITICAL recall, latency, cost per ticket, fallback count and run-to-run variance.
-- [ ] `events/fetch-ticket.json` and `events/sqs-event.json` exist and work with `sam local invoke`.
+- [x] Rubric and facts sheet written; evaluation set committed, with every urgency level and at least 6 red-team tickets. *(42 tickets, 7 red-team)*
+- [x] Evaluation script runs end to end against the deployed stack. *(two clean runs, 42/42 processed)*
+- [x] v0 row recorded in [RESULTS.md](RESULTS.md): accuracy, CRITICAL recall, latency, cost per ticket, fallback count and run-to-run variance. *(variance: 1 of 42 urgencies)*
+- [ ] `events/fetch-ticket.json` and `events/sqs-event.json` exist and work with `sam local invoke`. *(the events exist, and the receiver unit test runs `new-ticket.json`; `sam local invoke` not run, since Docker wasn't running)*
 
 *Free. Bedrock is billed per token, and one run costs cents.*
 
 ### Step 1: It said PROCESSED, but Bedrock failed
 A throttled model call returns a polite canned reply, the ticket is marked `PROCESSED`, and nobody knows. One bad record retries the whole batch and sends duplicate emails.
 
-Partial batch responses (`ReportBatchItemFailures`), rethrow retryable Bedrock errors, a fallback reply marked as such, the visibility timeout at ≥ 6× the function timeout, an idempotent update, 404/400 handling, ticket `status` in the fetch response, alarms on the DLQ and on function errors.
+Partial batch responses (`ReportBatchItemFailures`), retryable vs. permanent Bedrock errors, a `FAILED` status, a fallback reply marked as such, the visibility timeout at ≥ 6× the function timeout, an idempotent update, 404/400 handling, ticket `status` in the fetch response, alarms on the DLQ, throttling and function errors, and processor concurrency capped on purpose. The Step 0 throttling finding (lost tickets, 30-second redeliveries) belongs here. See [STEP-1-GUIDE.md](docs/STEP-1-GUIDE.md).
 
 **The point: a failure must be visible and retryable, never disguised as success.**
 
+**Don't deploy before the v0 baseline is recorded:** once Step 1 is deployed, the stack isn't v0 any more.
+
 **Exit:**
-- [ ] Force a Bedrock failure (wrong model ID) and watch the message retry and land in the DLQ, with the alarm firing.
+- [ ] Force a Bedrock failure (wrong model ID) and watch the ticket become `FAILED` without retries; transient failures retry and land in the DLQ, with the alarm firing.
+- [ ] Receiver throttling or API `5xx` raises an alarm.
 - [ ] One poisoned record in a batch of 10: the other 9 are processed exactly once.
 - [ ] `GET` for an unknown ticket returns `404`; malformed JSON returns `400`.
 - [ ] Evaluation re-run, `step-1` row in [RESULTS.md](RESULTS.md).

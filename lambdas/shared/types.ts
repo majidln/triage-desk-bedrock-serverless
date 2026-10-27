@@ -22,6 +22,12 @@ export interface TicketAnalytics {
     response: string;
 }
 
+export interface TicketFailure {
+    errorName: string;
+    message: string;
+    failedAt: string;
+}
+
 export interface SupportTicket {
     id: string;
     content: string;
@@ -32,6 +38,7 @@ export interface SupportTicket {
     urgency?: Urgency;
     response?: string;
     analyticsGeneratedAt?: string;
+    failure?: TicketFailure;
 }
 
 export interface CreateTicketRequest {

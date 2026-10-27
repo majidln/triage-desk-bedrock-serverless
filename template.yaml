@@ -20,7 +20,7 @@ Resources:
     Properties:
       StageName: !Ref StageName
       Name: !Sub '${AWS::StackName}-HttpApi'
-    
+
   SupportRequestReceiverFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -97,6 +97,8 @@ Resources:
           Properties:
             Queue: !GetAtt SupportRequestQueue.Arn
             BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SupportTicketTable
@@ -104,12 +106,12 @@ Resources:
             TopicName: !GetAtt SupportTicketNotificationTopic.TopicName
         - Statement:
             - Effect: Allow
-              Action: 
+              Action:
                 - bedrock:InvokeModel
               Resource:
                 - 'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0'
             - Effect: Allow
-              Action: 
+              Action:
                 - logs:CreateLogGroup
                 - logs:CreateLogStream
                 - logs:PutLogEvents
@@ -184,7 +186,7 @@ Resources:
     Properties:
       LogGroupName: !Sub '${AWS::StackName}-BedrockTicketProcessorErrorLogGroup'
       RetentionInDays: 30
-  
+
   BedrockTicketProcessorErrorMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -195,7 +197,7 @@ Resources:
           MetricNamespace: SupportPipeline
           MetricValue: 1
           DefaultValue: 0
-  
+
   BedrockTicketProcessorErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -211,7 +213,7 @@ Resources:
       AlarmActions:
         - !Ref BedrockTicketProcessorErrorAlertTopic
       TreatMissingData: notBreaching
-  
+
   BedrockTicketProcessorErrorAlertTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -234,17 +236,17 @@ Outputs:
   SupportRequestProcessorFunction:
     Description: Lambda Function ARN for Support Request Processor
     Value: !GetAtt SupportRequestProcessorFunction.Arn
-  
+
   SupportRequestQueue:
     Description: Support Request Queue ARN
     Value: !GetAtt SupportRequestQueue.Arn
-  
+
   SupportTicketNotificationTopicArn:
     Description: SNS Topic ARN for Support Ticket Notifications - Share this with admins to subscribe
     Value: !Ref SupportTicketNotificationTopic
     Export:
       Name: !Sub '${AWS::StackName}-TicketNotificationTopicArn'
-  
+
   BedrockErrorAlertTopicArn:
     Description: SNS Topic ARN for Bedrock Error Alerts - Share this with technical admins to subscribe
     Value: !Ref BedrockTicketProcessorErrorAlertTopic
