@@ -193,7 +193,8 @@ Run on 2026-10-27 against the deployed stack.
 | Message in the intake DLQ → `IntakeDLQ` alarm | One test message sent straight to the intake DLQ: ALARM ~3 min later, message deleted |
 | Processor crash → `ProcessorCrashes` alarm | The processor invoked by hand with `{}`: `TypeError: e.Records is not iterable`, an unhandled error. ALARM ~2 min later. The runtime logs the crash as a JSON line with `"level":"ERROR"`, so `ProcessorErrors` fired too. A sparse metric keeps its alarm red for up to ~20 min: CloudWatch looks back over a few periods before it treats missing data as OK |
 | The same message delivered twice | A processed ticket's stream record sent to the queue twice: 2 × `DuplicateMessage`, no Bedrock call, `notifiedAt` and `updatedAt` unchanged, so no second email |
-| Not proven live | A transient failure retried 5 times into the DLQ (unit tests and the redrive policy only), and `QueueBacklog` (needs a message older than 20 min) |
+| Transient failure → 5 retries → DLQ → alarm → redrive | A temporary IAM deny on `sns:Publish`: the ticket was saved as `PROCESSED`, then each email attempt failed with `AuthorizationErrorException`. 5 × `RecordRetried` (WARN), exactly 6 min apart (the visibility timeout), with no second Bedrock call. After the 5th receive SQS moved it to the DLQ (30 min after submit), and `RequestDLQ` went to ALARM 3 min later. With the deny removed, moving the message back to the queue sent the missing email: `notifiedAt` set within 25 s |
+| Nobody processing → `QueueBacklog` alarm | The processor's queue trigger disabled, then a ticket submitted; still waiting in the queue a minute later. `QueueBacklog` went to ALARM 22.8 min after submit (age > 1200 s, plus the metric's delay). With the trigger enabled again, the ticket was `PROCESSED` within 16 s. A first attempt sent the ticket 25 s after disabling the trigger, and it was processed: a disabled trigger takes a while to stop polling |
 
 ### Step 1 findings
 
