@@ -15,6 +15,7 @@
     "@aws-sdk/client-sns": "^3.968.0",
     "@aws-sdk/client-sqs": "^3.967.0",
     "@aws-sdk/lib-dynamodb": "^3.966.0",
+    "@aws-sdk/util-dynamodb": "^3.996.9",
     "esbuild": "^0.14.14",
     "uuid": "^13.0.0"
   },

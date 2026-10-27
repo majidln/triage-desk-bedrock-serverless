@@ -40,6 +40,7 @@ export interface SupportTicket {
     response?: string;
     analyticsGeneratedAt?: string;
     failure?: TicketFailure;
+    notifiedAt?: string;
 }
 
 export interface CreateTicketRequest {

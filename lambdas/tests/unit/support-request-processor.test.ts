@@ -8,6 +8,8 @@ import {
     ValidationException,
 } from '@aws-sdk/client-bedrock-runtime';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { marshall } from '@aws-sdk/util-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -45,6 +47,24 @@ const lambdaContext = {
     awsRequestId: 'test-request-id',
 } as Context;
 
+// The status changes (RECEIVED → PROCESSED or FAILED), not the notifiedAt writes.
+function guardedUpdates() {
+    return ddbMock
+        .commandCalls(UpdateCommand)
+        .map((c) => c.args[0].input)
+        .filter((input) => input.ConditionExpression);
+}
+
+// What DynamoDB throws when the ticket is no longer RECEIVED: the current item, or none
+// when the ticket doesn't exist.
+function alreadyMovedOn(item?: Record<string, unknown>) {
+    return new ConditionalCheckFailedException({
+        message: 'The conditional request failed',
+        $metadata: {},
+        Item: item ? marshall(item) : undefined,
+    });
+}
+
 // What the SDK passes to its exception constructors.
 const sdkError = { message: 'test', $metadata: {} };
 
@@ -66,7 +86,7 @@ describe('support-request-processor', () => {
         expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-2' }] });
 
         // record 3 was still processed after record 2 failed
-        const updated = ddbMock.commandCalls(UpdateCommand).map((c) => c.args[0].input.Key?.id);
+        const updated = guardedUpdates().map((input) => input.Key?.id);
         expect(updated).toEqual(['ticket-1', 'ticket-2', 'ticket-3']);
 
         // the failed ticket was never announced; the others exactly once
@@ -192,5 +212,61 @@ describe('support-request-processor', () => {
         expect(logged).not.toContain('hunter2');
         expect(logged).not.toContain(reply);
         [...spies, consoleSpy].forEach((spy) => spy.mockRestore());
+    });
+
+    describe('idempotency', () => {
+        it('only moves a ticket on while it is still RECEIVED', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await processRecord(exampleRecord(1));
+
+            const [save] = guardedUpdates();
+            expect(save.ConditionExpression).toBe('#status = :received');
+            expect(save.ExpressionAttributeValues?.[':received']).toBe('RECEIVED');
+            expect(ddbMock.commandCalls(UpdateCommand)[1].args[0].input.UpdateExpression).toBe(
+                'SET notifiedAt = :notifiedAt',
+            );
+        });
+
+        it('does nothing for a ticket that was already processed and announced', async () => {
+            ddbMock
+                .on(UpdateCommand)
+                .rejects(alreadyMovedOn({ id: 'ticket-1', status: 'PROCESSED', notifiedAt: '2026-10-27T10:00:00Z' }));
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('duplicate');
+            expect(snsMock.commandCalls(PublishCommand)).toHaveLength(0);
+        });
+
+        it('sends the missed email, with the saved triage, when the earlier delivery never announced it', async () => {
+            const saved = { urgency: 'CRITICAL', response: 'The answer that was saved.' };
+            ddbMock
+                .on(UpdateCommand)
+                .resolves({})
+                .on(UpdateCommand, { ConditionExpression: '#status = :received' })
+                .rejects(alreadyMovedOn({ id: 'ticket-1', status: 'PROCESSED', analytics: saved }));
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
+
+            const published = snsMock.commandCalls(PublishCommand);
+            expect(published).toHaveLength(1);
+            expect(published[0].args[0].input.Subject).toContain('CRITICAL');
+            expect(published[0].args[0].input.Message).toContain(saved.response);
+        });
+
+        it('never overwrites a processed ticket with FAILED', async () => {
+            bedrockMock.on(InvokeModelCommand).rejects(new ValidationException(sdkError));
+            ddbMock
+                .on(UpdateCommand)
+                .rejects(alreadyMovedOn({ id: 'ticket-1', status: 'PROCESSED', notifiedAt: '2026-10-27T10:00:00Z' }));
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('duplicate');
+        });
+
+        it("drops a message whose ticket doesn't exist", async () => {
+            ddbMock.on(UpdateCommand).rejects(alreadyMovedOn());
+
+            await expect(processRecord(exampleRecord(1))).resolves.toBe('dropped');
+            expect(snsMock.commandCalls(PublishCommand)).toHaveLength(0);
+        });
     });
 });

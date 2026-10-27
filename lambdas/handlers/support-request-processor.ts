@@ -1,7 +1,8 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { Context, SQSBatchItemFailure, SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
-import { TicketStatus, SupportTicketMessage, TicketTriage, TicketFailure } from '../shared/types';
+import { TicketStatus, SupportTicket, SupportTicketMessage, TicketTriage, TicketFailure } from '../shared/types';
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
@@ -23,8 +24,9 @@ const snsClient = new SNSClient({});
 // it goes back to SQS for a retry.
 //   processed: triaged, saved and the support team notified
 //   failed:    the ticket is marked FAILED (a permanent error), no retry
-//   dropped:   the message isn't a ticket we can read, so there's nothing to mark
-export type Outcome = 'processed' | 'failed' | 'dropped';
+//   duplicate: an earlier delivery of the same ticket already handled it
+//   dropped:   the message isn't a ticket we can act on, so there's nothing to mark
+export type Outcome = 'processed' | 'failed' | 'duplicate' | 'dropped';
 
 // sqs event handler: each record succeeds or fails on its own, and only the failed ones
 // are reported back to SQS for a retry (needs ReportBatchItemFailures on the event source)
@@ -47,17 +49,20 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
 };
 
 // Returning an outcome means "done, delete the message"; throwing means "retry it".
+// SQS can deliver the same message more than once, so every step here is safe to repeat.
 export async function processRecord(record: SQSRecord): Promise<Outcome> {
     const startedAt = Date.now();
+    const { messageId } = record;
     let message: SupportTicketMessage;
     try {
         message = parseMessage(record.body);
     } catch (err) {
         // Poisoned message: retrying can't fix it, and there's no ticket to mark FAILED,
         // so this log line is the only trace it leaves.
-        logger.error('PoisonedMessage', { messageId: record.messageId, bodyLength: record.body.length, error: err });
+        logger.error('PoisonedMessage', { messageId, bodyLength: record.body.length, error: err });
         return 'dropped';
     }
+    const { ticketId } = message;
 
     // Only the Bedrock call is classified: DynamoDB and SNS errors below are always retried
     // (DynamoDB also has a ValidationException, which isn't Bedrock's permanent one).
@@ -69,21 +74,50 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
         if (classifyError(err) === 'transient') {
             throw err;
         }
-        const failure = await markFailed(message, err);
-        logger.error('TicketFailed', { ticketId: message.ticketId, messageId: record.messageId, failure });
+        const failure = toFailure(err);
+        const result = await markFailed(ticketId, failure);
+        if (!result.updated) {
+            return alreadyHandled(message, result.current, messageId);
+        }
+        logger.error('TicketFailed', { ticketId, messageId, failure });
         return 'failed';
     }
 
-    await saveTriage(message, triage);
-    await notifySupportTeam(message, triage);
+    const result = await saveTriage(ticketId, triage);
+    if (!result.updated) {
+        return alreadyHandled(message, result.current, messageId);
+    }
+    await notifyAndRecord(message, triage);
 
     logger.info('TicketProcessed', {
-        ticketId: message.ticketId,
-        messageId: record.messageId,
+        ticketId,
+        messageId,
         urgency: triage.urgency,
         durationMs: Date.now() - startedAt,
     });
     return 'processed';
+}
+
+// An earlier delivery moved this ticket on before us (or there's no such ticket).
+async function alreadyHandled(
+    message: SupportTicketMessage,
+    current: StoredTicket | null,
+    messageId: string,
+): Promise<Outcome> {
+    const { ticketId } = message;
+    if (current === null) {
+        logger.error('TicketNotFound', { ticketId, messageId });
+        return 'dropped';
+    }
+    // The earlier delivery saved the triage but never sent the email (SNS failed, then the
+    // retry lost the race to its own save). Send it now, with the triage that was saved.
+    if (current.status === TicketStatus.PROCESSED && current.analytics && !current.notifiedAt) {
+        await notifyAndRecord(message, current.analytics);
+        logger.info('TicketProcessed', { ticketId, messageId, urgency: current.analytics.urgency, notifyOnly: true });
+        return 'processed';
+    }
+    logger.info('DuplicateMessage', { ticketId, messageId, status: current.status });
+    return 'duplicate';
 }
 
 function parseMessage(body: string): SupportTicketMessage {
@@ -99,64 +133,104 @@ function parseMessage(body: string): SupportTicketMessage {
     return { ticketId: message.ticketId, content: message.content };
 }
 
-async function saveTriage(message: SupportTicketMessage, triage: TicketTriage): Promise<void> {
-    const now = new Date().toISOString();
-    await docClient.send(
-        new UpdateCommand({
-            TableName: config.tableName,
-            Key: {
-                id: message.ticketId,
-            },
-            UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics',
-            ExpressionAttributeNames: {
-                '#status': 'status',
-            },
-            ExpressionAttributeValues: {
-                ':status': TicketStatus.PROCESSED,
-                ':updatedAt': now,
-                ':analytics': {
-                    ...triage,
-                    generatedAt: now,
-                },
-            },
-        }),
-    );
+// The parts of a stored ticket the duplicate check reads.
+type StoredTicket = Pick<SupportTicket, 'status' | 'notifiedAt'> & { analytics?: TicketTriage };
+
+// Whether a guarded update was made. When it wasn't, `current` is the ticket as it is now,
+// or null when there's no such ticket.
+type GuardedUpdate = { updated: true } | { updated: false; current: StoredTicket | null };
+
+// Runs an update only while the ticket is still RECEIVED, so of two deliveries of the same
+// ticket only the first one moves it on (RECEIVED → PROCESSED or FAILED).
+async function updateIfReceived(input: UpdateCommandInput): Promise<GuardedUpdate> {
+    try {
+        await docClient.send(
+            new UpdateCommand({
+                ...input,
+                ConditionExpression: '#status = :received',
+                ExpressionAttributeValues: { ...input.ExpressionAttributeValues, ':received': TicketStatus.RECEIVED },
+                // On a failed condition, DynamoDB returns the current item: no extra read needed
+                ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+            }),
+        );
+        return { updated: true };
+    } catch (err) {
+        if (err instanceof ConditionalCheckFailedException) {
+            return { updated: false, current: err.Item ? (unmarshall(err.Item) as StoredTicket) : null };
+        }
+        throw err;
+    }
 }
 
-async function markFailed(message: SupportTicketMessage, err: unknown): Promise<TicketFailure> {
-    const failedAt = new Date().toISOString();
-    const failure: TicketFailure = {
+async function saveTriage(ticketId: string, triage: TicketTriage): Promise<GuardedUpdate> {
+    const now = new Date().toISOString();
+    return updateIfReceived({
+        TableName: config.tableName,
+        Key: {
+            id: ticketId,
+        },
+        UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics',
+        ExpressionAttributeNames: {
+            '#status': 'status',
+        },
+        ExpressionAttributeValues: {
+            ':status': TicketStatus.PROCESSED,
+            ':updatedAt': now,
+            ':analytics': {
+                ...triage,
+                generatedAt: now,
+            },
+        },
+    });
+}
+
+function toFailure(err: unknown): TicketFailure {
+    return {
         errorName: err instanceof Error ? err.name : 'UnknownError',
         message: err instanceof Error ? err.message : String(err),
-        failedAt,
+        failedAt: new Date().toISOString(),
     };
-    // A failure here is thrown to the handler, so the record is retried rather than lost.
+}
+
+// A DynamoDB error here is thrown to the handler, so the record is retried rather than lost.
+async function markFailed(ticketId: string, failure: TicketFailure): Promise<GuardedUpdate> {
+    return updateIfReceived({
+        TableName: config.tableName,
+        Key: {
+            id: ticketId,
+        },
+        UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, failure = :failure',
+        ExpressionAttributeNames: {
+            '#status': 'status',
+        },
+        ExpressionAttributeValues: {
+            ':status': TicketStatus.FAILED,
+            ':updatedAt': failure.failedAt,
+            ':failure': failure,
+        },
+    });
+}
+
+// Sends the email, then records that it was sent. If the second write fails, the retry
+// sends the email again: a rare duplicate email is better than a missed one.
+async function notifyAndRecord(message: SupportTicketMessage, triage: TicketTriage): Promise<void> {
+    await snsClient.send(
+        new PublishCommand({
+            TopicArn: config.topicArn,
+            Message: `New support ticket received: ${message.ticketId}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
+            Subject: `::${triage.urgency}:: New Support Ticket`,
+        }),
+    );
     await docClient.send(
         new UpdateCommand({
             TableName: config.tableName,
             Key: {
                 id: message.ticketId,
             },
-            UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, failure = :failure',
-            ExpressionAttributeNames: {
-                '#status': 'status',
-            },
+            UpdateExpression: 'SET notifiedAt = :notifiedAt',
             ExpressionAttributeValues: {
-                ':status': TicketStatus.FAILED,
-                ':updatedAt': failedAt,
-                ':failure': failure,
+                ':notifiedAt': new Date().toISOString(),
             },
         }),
     );
-    return failure;
-}
-
-async function notifySupportTeam(message: SupportTicketMessage, triage: TicketTriage): Promise<void> {
-    const input = {
-        TopicArn: config.topicArn,
-        Message: `New support ticket received: ${message.ticketId}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
-        Subject: `::${triage.urgency}:: New Support Ticket`,
-    };
-    const command = new PublishCommand(input);
-    await snsClient.send(command);
 }

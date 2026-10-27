@@ -191,6 +191,8 @@ The processor writes structured JSON logs with [Powertools for AWS Lambda](https
 | `RecordRetried` | WARN | A transient error; SQS retries the message, then sends it to the DLQ |
 | `TicketFailed` | ERROR | A permanent error; the ticket is marked `FAILED` with the reason |
 | `PoisonedMessage` | ERROR | A message that isn't a readable ticket; dropped |
+| `TicketNotFound` | ERROR | A message for a ticket that isn't in the table; dropped |
+| `DuplicateMessage` | INFO | SQS delivered a ticket that was already handled; nothing done again |
 
 One line per message, for how it ended: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
 
