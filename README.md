@@ -58,11 +58,13 @@ sam deploy --guided
 
 The API Gateway endpoint URL will be displayed in the deployment output.
 
-**Important:** After deployment, subscribe to the SNS topics for notifications:
-- **Support Ticket Notifications**: Subscribe to receive notifications when tickets are processed
-- **Bedrock Error Alerts**: Subscribe to receive alerts when Bedrock processing errors occur
+To receive the pipeline's alarms by email, pass an address when deploying, then click the confirmation link AWS sends:
 
-Use the SNS Topic ARNs from the deployment outputs to subscribe via AWS Console, CLI, or SDK.
+```bash
+sam deploy --parameter-overrides AlertEmail=you@example.com
+```
+
+The support team subscribes to the ticket notifications topic (output `SupportTicketNotificationTopicArn`) in the console or with the CLI.
 
 ## Local Development
 
@@ -201,10 +203,24 @@ The processor writes structured JSON logs with [Powertools for AWS Lambda](https
 
 One line per message, for how it ended: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
 
-### CloudWatch Metrics and Alarms
+### CloudWatch Alarms
 
-- **Metric** `TriageDesk / ProcessorErrors`: a metric filter counts the processor's `ERROR` lines.
-- **Alarm** `{StackName}-ProcessorErrors`: fires on 1 or more in 5 minutes, since each one is a ticket that needs a person. It notifies the alert topic (output `AlertTopicArn`). Missing data counts as OK.
+Each alarm watches a symptom a customer or the support team would notice. It emails the alert topic (output `AlertTopicArn`) when it fires and again when it's back to OK. No data, as at night with no traffic, counts as OK.
+
+| Alarm | Fires when | Means |
+|---|---|---|
+| `{StackName}-Api5xx` | ≥ 1 API `5xx` in 5 min | A customer couldn't submit or fetch a ticket (a throttled receiver shows up here as a `503`) |
+| `{StackName}-ProcessorErrors` | ≥ 1 processor `ERROR` line in 5 min | A ticket was marked `FAILED`, or a message was dropped: someone has to look. Counted by a metric filter, `TriageDesk / ProcessorErrors` |
+| `{StackName}-ProcessorCrashes` | ≥ 1 Lambda `Errors` in 5 min | The processor crashed or timed out (not a single ticket's failure) |
+| `{StackName}-RequestDLQ` | ≥ 1 message in the request DLQ | A ticket failed every retry. Fix the cause, then redrive it |
+| `{StackName}-IntakeDLQ` | ≥ 1 message in the intake DLQ | The intake pipe couldn't queue new tickets; they're stuck as `RECEIVED` |
+| `{StackName}-QueueBacklog` | Oldest queued ticket > 20 min | Tickets are waiting and nothing is processing them |
+
+To check the email path without breaking anything (this doesn't test the metric):
+
+```bash
+aws cloudwatch set-alarm-state --alarm-name triage-desk-ProcessorErrors --state-value ALARM --state-reason "Testing the alert email"
+```
 
 ## Cleanup
 
