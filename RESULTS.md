@@ -11,7 +11,7 @@ One row per step. Targets are in [PLANNING.md §1.4](PLANNING.md#14-success-crit
 | Step | What changed | Model | Urgency accuracy | CRITICAL recall | Grounded replies | Red-team passed | p95 latency | Cost / ticket |
 |---|---|---|---|---|---|---|---|---|
 | v0 | Baseline | Nova Lite | 52.4% (22/42) | 37.5% (3/8) | 6/42 correct, 9 invented policies | 2/7 | 16.0 s | $0.000050 |
-| 1 | Reliability | | | | | | | |
+| 1 | Reliability | Nova Lite | 52.4% (22/42) | 37.5% (3/8) | not re-reviewed (prompt unchanged) | not re-reviewed | 19.8 s | $0.000050 |
 | 2 | Converse API, structured output | | | | | | | |
 | 3 | Guardrails and security | | | | | | | |
 | 4 | Knowledge Base grounding | | | | | | | |
@@ -140,17 +140,70 @@ The `must_include`/`must_not` flags pointed to the right tickets, but the verdic
 
 ## Step 1: reliability
 
+Step 1 changes how tickets move, not what the model says. The prompt and model are the same as v0, so urgency and replies should match v0 within run-to-run variance, and the manual review wasn't repeated.
+
+**Environment**
+
+- Commit: `c34184e`, no uncommitted changes
+- Evaluation set: unchanged, sha1 `dceac557…`
+- Model: `amazon.nova-lite-v1:0`, same settings as v0
+- Pipeline: intake through the table's stream and an EventBridge Pipe, batch size 5, processor capped at 5 concurrent runs, Lambda concurrency limit 1000
+- Run: [`step-1`](eval/reports/2026-10-27T172430-step-1.md), runner concurrency 3
+
+### Outcomes
+
+| processed | fallback | timeout | not-submitted |
+|---|---|---|---|
+| 42 | 0 | 0 | 0 |
+
+- Urgency: 22/42, CRITICAL recall 3/8, the same as v0. 4 of 42 urgencies differ from v0 (T13, T15, T17, T29), with no net effect on the score. Step 0's two runs differed by 1, so the model (temperature 0.1) varies a little more than that measured.
+- Red-team: the same 5/7 fail the automatic checks as in v0.
+- 42 Bedrock invocations for 42 tickets, 0 throttled. No ticket was retried.
+
+### Latency
+
+| Metric | p50 | p95 | max |
+|---|---|---|---|
+| Submit → `202` | 0.2 s | 0.7 s | 1.8 s |
+| Submit → draft available | 10.2 s | 19.8 s | 20.2 s |
+| Processing one ticket (`TicketProcessed` `durationMs`) | 1.4 s | 2.9 s | 3.5 s |
+
+Where a ticket's time goes, from the processor's logs and each ticket's `createdAt`:
+
+| Part | Time |
+|---|---|
+| Stream → Pipe → queue → processor, when a processor is free | ~0.5–1.5 s |
+| Waiting for a free processor | 0–19 s, growing with the ticket's place in the burst |
+| Bedrock, DynamoDB and SNS for the ticket | ~1.4 s |
+
 ### Failure proofs
+
+Run on 2026-10-27 against the deployed stack.
 
 | Proof | Result |
 |---|---|
-| Forced Bedrock failure → retry → DLQ → alarm | |
-| Poisoned record in a batch of 10, the other 9 processed exactly once | |
-| `404` for an unknown ticket, `400` for malformed JSON | |
+| Intake through the Pipe | Submitted → `PROCESSED` in ~12 s (cold), one `TicketProcessed`, no `DuplicateMessage`: the processor's own update (a MODIFY) wasn't queued again |
+| Permanent Bedrock failure (model id `amazon.nova-lite-v9:0`) | `FAILED` within 4 s with `ValidationException`, one `TicketFailed`, no `RecordRetried`, queue empty. Deployed back and re-checked: next ticket `PROCESSED` |
+| Transient Bedrock failure | Unit tests only: provoking throttling means going past the 100 requests/minute quota on purpose |
+| Poisoned message sent with 9 real tickets | One `PoisonedMessage` (ERROR), dropped without a retry; 9 × `TicketProcessed`, each once; queue and DLQ empty. The live run can't force all ten into one batch, so the shared batch is proven by the unit test |
+| `400` / `404` | Malformed JSON, `{}`, a missing or non-UUID `ticketId` → `400` with the reason; an unknown UUID → `404` |
+| Alarm, for real | The poisoned message's ERROR line → `ProcessorErrors` metric → `triage-desk-ProcessorErrors` went to ALARM ~80 s later and published to `triage-desk-Alerts`, which emails the confirmed subscription |
+| Receiver throttled → `Api5xx` alarm | Receiver reserved concurrency set to 0: three `POST`s got `503 Service Unavailable`, the Step 0 failure. `triage-desk-Api5xx` went to ALARM ~100 s later, and back to OK ~4 min after the setting was removed |
+| Message in the request DLQ → `RequestDLQ` alarm | One test message sent straight to the DLQ: ALARM ~2.5 min later. Deleted at once, but the alarm stayed in ALARM for 8 min, because `Maximum` over a 5-minute window still includes the minute the message was there |
 
 ### Step 1 findings
 
--
+#### 1. Nothing was lost, and nothing failed silently
+
+v0 at a concurrency limit of 10 lost 3–18 tickets to `503`s and delayed 8 by 31 s. Step 1 processed 42 of 42 with no retries, and every way a ticket can fail now ends in a status (`FAILED`), a log line and an alarm instead of a canned reply marked `PROCESSED`.
+
+#### 2. p95 went up, from 16.0 s to 19.8 s, because the cap turns a burst into a queue
+
+The submits are faster now (`202` p95 0.7 s, against 2.2 s), so all 42 tickets arrived in 3.2 s, about 13 a second. Five processors at ~1.4 s a ticket finish about 3.5 a second, so the last tickets waited ~19 s in the queue. That is the cap doing its job: Bedrock saw 42 calls in ~20 s and throttled none. It is still under the 30 s target. v0 had no cap, but its numbers depended on how SQS happened to batch the tickets (finding 4 of Step 0).
+
+#### 3. A ticket takes 1.4 s, not the 3 s the cap was sized with
+
+Measured from `durationMs`, one processor handles ~40 tickets a minute, so 5 could ask Bedrock for ~200 a minute in a long spike, twice the quota. The extra calls would be throttled, treated as transient and retried after the 360 s visibility timeout. The 42-ticket burst was too short to reach that, so the cap stays at 5 for now; a longer spike that shows `RecordRetried` with throttling means lowering it to 3 or asking for a higher Bedrock quota.
 
 ---
 

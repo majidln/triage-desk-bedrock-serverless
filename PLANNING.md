@@ -185,11 +185,11 @@ Partial batch responses (`ReportBatchItemFailures`), retryable vs. permanent Bed
 **Don't deploy before the v0 baseline is recorded:** once Step 1 is deployed, the stack isn't v0 any more.
 
 **Exit:**
-- [ ] Force a Bedrock failure (wrong model ID) and watch the ticket become `FAILED` without retries; transient failures retry and land in the DLQ, with the alarm firing.
-- [ ] Receiver throttling or API `5xx` raises an alarm.
-- [ ] One poisoned record in a batch of 10: the other 9 are processed exactly once.
-- [ ] `GET` for an unknown ticket returns `404`; malformed JSON returns `400`.
-- [ ] Evaluation re-run, `step-1` row in [RESULTS.md](RESULTS.md).
+- [ ] Force a Bedrock failure (wrong model ID) and watch the ticket become `FAILED` without retries; transient failures retry and land in the DLQ, with the alarm firing. *(permanent path proven live: `FAILED` in 4 s, no retries, `ProcessorErrors` alarm fired. Transient retries landing in the DLQ are proven by unit tests and the redrive policy only; the `RequestDLQ` alarm fired live for a message put in the DLQ)*
+- [x] Receiver throttling or API `5xx` raises an alarm. *(receiver reserved concurrency 0 → `503` → `Api5xx` alarm)*
+- [x] One poisoned record in a batch of 10: the other 9 are processed exactly once. *(live: dropped once, 9 × `TicketProcessed`, alarm fired; the shared batch is proven by the unit test)*
+- [x] `GET` for an unknown ticket returns `404`; malformed JSON returns `400`.
+- [x] Evaluation re-run, `step-1` row in [RESULTS.md](RESULTS.md). *(42/42 processed, 0 retried, p95 19.8 s)*
 
 *Free.*
 
