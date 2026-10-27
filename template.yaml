@@ -44,6 +44,8 @@ Resources:
         Variables:
           SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           SUPPORT_REQUEST_QUEUE: !GetAtt SupportRequestQueue.QueueUrl
+          POWERTOOLS_SERVICE_NAME: triage-receiver
+          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -74,6 +76,8 @@ Resources:
       Environment:
         Variables:
           SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
+          POWERTOOLS_SERVICE_NAME: triage-fetch
+          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:

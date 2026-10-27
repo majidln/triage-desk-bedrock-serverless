@@ -1,73 +1,87 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
+import { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { PutCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { v4 as uuidv4 } from 'uuid';
 import { TicketStatus, CreateTicketRequest, CreateTicketResponse } from '../shared/types';
+import { requireEnv } from '../shared/env';
+import { json } from '../shared/http';
+import { logger } from '../shared/logger';
+
+// Read once at cold start: a missing variable fails here, not on the first request.
+const config = {
+    tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
+    queueUrl: requireEnv('SUPPORT_REQUEST_QUEUE'),
+};
 
 const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
 const sqsClient = new SQSClient({});
 
-const queueUrl = process.env.SUPPORT_REQUEST_QUEUE || '';
+export const handler = async (
+    event: APIGatewayProxyEventV2,
+    context: Context,
+): Promise<APIGatewayProxyStructuredResultV2> => {
+    logger.addContext(context);
 
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+    // A bad request is the client's mistake: 400 with the reason, never a 500
+    const parsed = parseRequest(event.body);
+    if (typeof parsed === 'string') {
+        return json(400, { message: parsed });
+    }
+
     try {
-        // Parse and validate request body using CreateTicketRequest type
-        const requestBody: CreateTicketRequest = event.body ? JSON.parse(event.body) : {};
-
-        // Validate required fields
-        if (!requestBody.content) {
-            return {
-                statusCode: 400,
-                body: JSON.stringify({
-                    message: 'content is required',
-                }),
-            };
-        }
-
         const ticketId = uuidv4();
-        const customerId = requestBody.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
+        const customerId = parsed.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
+        const now = new Date().toISOString();
 
-        const command = new PutCommand({
-            TableName: process.env.SUPPORT_TICKETS_TABLE,
-            Item: {
-                id: ticketId,
-                content: requestBody.content,
-                status: TicketStatus.RECEIVED,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                customerId: customerId,
-            },
-        });
-        await docClient.send(command);
-
-        const sendMessageCommand = new SendMessageCommand({
-            QueueUrl: queueUrl,
-            MessageBody: JSON.stringify({
-                ticketId: ticketId,
-                content: requestBody.content,
+        await docClient.send(
+            new PutCommand({
+                TableName: config.tableName,
+                Item: {
+                    id: ticketId,
+                    content: parsed.content,
+                    status: TicketStatus.RECEIVED,
+                    createdAt: now,
+                    updatedAt: now,
+                    customerId,
+                },
             }),
-        });
-        await sqsClient.send(sendMessageCommand);
+        );
 
-        // Use CreateTicketResponse type for response
+        await sqsClient.send(
+            new SendMessageCommand({
+                QueueUrl: config.queueUrl,
+                MessageBody: JSON.stringify({ ticketId, content: parsed.content }),
+            }),
+        );
+
+        logger.info('TicketReceived', { ticketId, contentLength: parsed.content.length });
         const response: CreateTicketResponse = {
             message: 'new ticket has been created for this request',
-            ticketId: ticketId,
+            ticketId,
         };
-
-        return {
-            statusCode: 202,
-            body: JSON.stringify(response),
-        };
+        return json(202, response);
     } catch (err) {
-        console.log(err);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({
-                message: 'some error happened',
-            }),
-        };
+        logger.error('RequestFailed', { error: err });
+        return json(500, { message: 'some error happened' });
     }
 };
+
+// The request body as a ticket request, or the reason it isn't one.
+function parseRequest(body: string | undefined): CreateTicketRequest | string {
+    let request: unknown;
+    try {
+        request = JSON.parse(body ?? '');
+    } catch {
+        return 'body must be JSON';
+    }
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+        return 'body must be a JSON object';
+    }
+    const { content, customerId } = request as Record<string, unknown>;
+    if (typeof content !== 'string' || content.trim() === '') {
+        return 'content is required';
+    }
+    return { content, customerId: typeof customerId === 'string' ? customerId : undefined };
+}

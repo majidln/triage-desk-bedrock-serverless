@@ -158,26 +158,27 @@ Commit before a real run: the report records the commit, and warns when there ar
 }
 ```
 
-**Response:**
-```json
-{
-  "message": "new ticket has been created for this request",
-  "ticketId": "uuid-here"
-}
-```
+**Responses:**
+
+| Status | When | Body |
+|---|---|---|
+| `202` | The ticket is stored and queued | `{ "message": "new ticket has been created for this request", "ticketId": "<uuid>" }` |
+| `400` | The body isn't a JSON object with a non-empty `content` string | `{ "message": "<reason>" }` |
+| `500` | Something failed on our side | `{ "message": "some error happened" }` |
 
 ### Fetch Support Ticket
 
 **Endpoint:** `GET /support-request?ticketId=<ticket-id>`
 
-**Response:**
-```json
-{
-  "response": "Thank you for contacting support. We have received your request and will get back to you soon."
-}
-```
+**Responses:**
 
-**Note:** The response field will be `undefined` if the ticket hasn't been processed yet by the AI processor.
+| Status | When | Body |
+|---|---|---|
+| `200` | The ticket exists | `{ "ticketId": "<uuid>", "status": "RECEIVED" \| "PROCESSED" \| "FAILED", "response"?: "<reply>" }` |
+| `400` | `ticketId` is missing or isn't a UUID | `{ "message": "<reason>" }` |
+| `404` | No ticket with that id | `{ "message": "ticket not found" }` |
+
+`response` is present only when `status` is `PROCESSED`. Keep polling while it's `RECEIVED`; `FAILED` means the ticket couldn't be answered automatically.
 
 ## Monitoring and Observability
 
