@@ -16,276 +16,270 @@ import { pct, secs } from './util.ts';
 // terminal, the JSON and the Markdown are all rendered from it.
 
 export interface Latency {
-    p50: number;
-    p95: number;
-    max: number;
-    count: number;
+  p50: number;
+  p95: number;
+  max: number;
+  count: number;
 }
 
 export interface TicketRow {
-    id: string;
-    category: string;
-    redTeam: string | null;
-    expected: Urgency;
-    outcome: Outcome;
-    urgency?: string;
-    content: string;
-    response?: string;
-    ackMs: number;
-    submitStatus: number; // HTTP status of the submit, 0 if no response
-    submitError?: string; // why the submit failed, e.g. a throttling message
-    processingMs?: number;
-    missing: string[];
-    forbidden: string[];
+  id: string;
+  category: string;
+  redTeam: string | null;
+  expected: Urgency;
+  outcome: Outcome;
+  urgency?: string;
+  content: string;
+  response?: string;
+  ackMs: number;
+  submitStatus: number; // HTTP status of the submit, 0 if no response
+  submitError?: string; // why the submit failed, e.g. a throttling message
+  processingMs?: number;
+  missing: string[];
+  forbidden: string[];
 }
 
 export interface Report {
-    meta: {
-        label: string;
-        startedAt: string;
-        finishedAt: string;
-        gitCommit: string;
-        gitDirty: boolean; // uncommitted changes: the commit doesn't fully describe what ran
-        ticketsFile: string;
-        ticketsSha: string; // which version of the exam
-        modelId: string;
-        pricePerMillion: { input: number; output: number };
-        region: string;
-        apiUrl: string;
-        concurrency: number;
-    };
-    outcomes: Record<Outcome, number>;
-    accuracy: Accuracy;
-    matrix: Matrix;
-    levels: Record<Urgency, LevelScore>;
-    byCategory: Record<string, Accuracy>;
-    redTeam: RedTeamResult[];
-    replyChecks: ReplyCheck[];
-    latency: { ack: Latency; processing: Latency };
-    usage: BedrockUsage;
-    costPerTicket: number;
-    tickets: TicketRow[];
+  meta: {
+    label: string;
+    startedAt: string;
+    finishedAt: string;
+    gitCommit: string;
+    gitDirty: boolean; // uncommitted changes: the commit doesn't fully describe what ran
+    ticketsFile: string;
+    ticketsSha: string; // which version of the exam
+    modelId: string;
+    pricePerMillion: { input: number; output: number };
+    region: string;
+    apiUrl: string;
+    concurrency: number;
+  };
+  outcomes: Record<Outcome, number>;
+  accuracy: Accuracy;
+  matrix: Matrix;
+  levels: Record<Urgency, LevelScore>;
+  byCategory: Record<string, Accuracy>;
+  redTeam: RedTeamResult[];
+  replyChecks: ReplyCheck[];
+  latency: { ack: Latency; processing: Latency };
+  usage: BedrockUsage;
+  costPerTicket: number;
+  tickets: TicketRow[];
 }
 
 export function gitInfo(): { commit: string; dirty: boolean } {
-    try {
-        const commit = execSync('git rev-parse HEAD').toString().trim();
-        // Only changes to tracked files: new report files are always untracked.
-        const dirty = execSync('git status --porcelain --untracked-files=no').toString().trim() !== '';
-        return { commit, dirty };
-    } catch {
-        return { commit: 'unknown', dirty: true };
-    }
+  try {
+    const commit = execSync('git rev-parse HEAD').toString().trim();
+    // Only changes to tracked files: new report files are always untracked.
+    const dirty = execSync('git status --porcelain --untracked-files=no').toString().trim() !== '';
+    return { commit, dirty };
+  } catch {
+    return { commit: 'unknown', dirty: true };
+  }
 }
 
 export async function sha1(path: string): Promise<string> {
-    return createHash('sha1')
-        .update(await readFile(path))
-        .digest('hex');
+  return createHash('sha1')
+    .update(await readFile(path))
+    .digest('hex');
 }
 
 // Nearest-rank percentile: the value below which p% of the samples fall.
 export function latency(values: number[]): Latency {
-    const sorted = [...values].sort((a, b) => a - b);
-    const at = (p: number) => (sorted.length === 0 ? 0 : sorted[Math.ceil((p / 100) * sorted.length) - 1]);
-    return { p50: at(50), p95: at(95), max: sorted.at(-1) ?? 0, count: sorted.length };
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (p: number) => (sorted.length === 0 ? 0 : sorted[Math.ceil((p / 100) * sorted.length) - 1]);
+  return { p50: at(50), p95: at(95), max: sorted.at(-1) ?? 0, count: sorted.length };
 }
 
 export function ticketRows(collected: Collected[], checks: ReplyCheck[]): TicketRow[] {
-    return collected.map((c) => {
-        const t = c.submission.ticket;
-        const check = checks.find((r) => r.id === t.id);
-        return {
-            id: t.id,
-            category: t.category,
-            redTeam: t.red_team,
-            expected: t.expected_urgency,
-            outcome: c.outcome,
-            urgency: c.urgency,
-            content: t.content,
-            response: c.response,
-            ackMs: Math.round(c.submission.ackMs),
-            submitStatus: c.submission.status,
-            submitError: c.submission.error,
-            processingMs: c.processingMs,
-            missing: check?.missing ?? [],
-            forbidden: check?.forbidden ?? [],
-        };
-    });
+  return collected.map((c) => {
+    const t = c.submission.ticket;
+    const check = checks.find((r) => r.id === t.id);
+    return {
+      id: t.id,
+      category: t.category,
+      redTeam: t.red_team,
+      expected: t.expected_urgency,
+      outcome: c.outcome,
+      urgency: c.urgency,
+      content: t.content,
+      response: c.response,
+      ackMs: Math.round(c.submission.ackMs),
+      submitStatus: c.submission.status,
+      submitError: c.submission.error,
+      processingMs: c.processingMs,
+      missing: check?.missing ?? [],
+      forbidden: check?.forbidden ?? [],
+    };
+  });
 }
 
 export function renderMarkdown(r: Report): string {
-    const m = r.meta;
-    const crit = r.levels.CRITICAL;
-    const fails = r.redTeam.filter((x) => x.verdict === 'FAIL').length;
-    const lines: string[] = [];
-    const table = (header: string[], rows: (string | number)[][]) => {
-        lines.push(`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`);
-        for (const row of rows) lines.push(`| ${row.join(' | ')} |`);
-        lines.push('');
-    };
+  const m = r.meta;
+  const crit = r.levels.CRITICAL;
+  const fails = r.redTeam.filter((x) => x.verdict === 'FAIL').length;
+  const lines: string[] = [];
+  const table = (header: string[], rows: (string | number)[][]) => {
+    lines.push(`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`);
+    for (const row of rows) lines.push(`| ${row.join(' | ')} |`);
+    lines.push('');
+  };
 
-    lines.push(`# Evaluation report: ${m.label}`, '');
-    lines.push(
-        "Generated by `eval/run.ts`. Don't edit: re-run instead. The manual review goes in the `-review.md` file.",
-        '',
-    );
+  lines.push(`# Evaluation report: ${m.label}`, '');
+  lines.push(
+    "Generated by `eval/run.ts`. Don't edit: re-run instead. The manual review goes in the `-review.md` file.",
+    '',
+  );
+  table(
+    ['', ''],
+    [
+      ['Started', m.startedAt],
+      ['Commit', `\`${m.gitCommit.slice(0, 7)}\`${m.gitDirty ? ' (with uncommitted changes)' : ''}`],
+      ['Tickets', `\`${m.ticketsFile}\` (sha1 \`${m.ticketsSha.slice(0, 12)}\`)`],
+      ['Model', `\`${m.modelId}\``],
+      ['API', m.apiUrl],
+      ['Concurrency', m.concurrency],
+    ],
+  );
+
+  lines.push('## Summary', '');
+  table(
+    [
+      'Urgency accuracy (model)',
+      'Urgency accuracy (system)',
+      'CRITICAL recall',
+      'Red-team auto-FAIL',
+      'p95 latency',
+      'Cost / ticket',
+    ],
+    [
+      [
+        `${pct(r.accuracy.model)} (${r.accuracy.correct}/${r.accuracy.processed})`,
+        `${pct(r.accuracy.system)} (${r.accuracy.correct}/${r.accuracy.total})`,
+        crit.support === 0 ? 'n/a' : `${pct(crit.recall)} (${r.matrix.CRITICAL.CRITICAL}/${crit.support})`,
+        `${fails}/${r.redTeam.length}`,
+        secs(r.latency.processing.p95),
+        `$${r.costPerTicket.toFixed(6)}`,
+      ],
+    ],
+  );
+
+  lines.push('## Outcomes', '');
+  table(Object.keys(r.outcomes), [Object.values(r.outcomes)]);
+
+  lines.push('## Urgency', '', 'Rows: expected. Columns: what the AI said.', '');
+  table(
+    ['expected \\ AI', ...COLUMNS],
+    LEVELS.map((l) => [l, ...COLUMNS.map((c) => r.matrix[l][c])]),
+  );
+  table(
+    ['Level', 'Support', 'Recall', 'Precision'],
+    LEVELS.map((l) => {
+      const s = r.levels[l];
+      return [l, s.support, s.support ? pct(s.recall) : 'n/a', s.predicted ? pct(s.precision) : 'n/a'];
+    }),
+  );
+
+  lines.push('### By category', '');
+  table(
+    ['Category', 'Model accuracy', 'Correct / processed'],
+    Object.entries(r.byCategory).map(([k, a]) => [
+      k,
+      a.processed ? pct(a.model) : 'n/a',
+      `${a.correct}/${a.processed}`,
+    ]),
+  );
+
+  lines.push('## Red-team (automatic verdicts, confirm by hand)', '');
+  table(
+    ['Ticket', 'Attack', 'Verdict', 'Reasons'],
+    r.redTeam.map((x) => [x.id, x.attack, x.verdict, x.reasons.join('; ') || '-']),
+  );
+
+  lines.push('## Reply flags', '');
+  const flagged = r.replyChecks.filter((c) => c.missing.length || c.forbidden.length);
+  if (flagged.length === 0) lines.push('None.', '');
+  else
     table(
-        ['', ''],
-        [
-            ['Started', m.startedAt],
-            ['Commit', `\`${m.gitCommit.slice(0, 7)}\`${m.gitDirty ? ' (with uncommitted changes)' : ''}`],
-            ['Tickets', `\`${m.ticketsFile}\` (sha1 \`${m.ticketsSha.slice(0, 12)}\`)`],
-            ['Model', `\`${m.modelId}\``],
-            ['API', m.apiUrl],
-            ['Concurrency', m.concurrency],
-        ],
+      ['Ticket', 'Missing', 'Forbidden'],
+      flagged.map((c) => [c.id, c.missing.join(', ') || '-', c.forbidden.join(', ') || '-']),
     );
 
-    lines.push('## Summary', '');
-    table(
-        [
-            'Urgency accuracy (model)',
-            'Urgency accuracy (system)',
-            'CRITICAL recall',
-            'Red-team auto-FAIL',
-            'p95 latency',
-            'Cost / ticket',
-        ],
-        [
-            [
-                `${pct(r.accuracy.model)} (${r.accuracy.correct}/${r.accuracy.processed})`,
-                `${pct(r.accuracy.system)} (${r.accuracy.correct}/${r.accuracy.total})`,
-                crit.support === 0 ? 'n/a' : `${pct(crit.recall)} (${r.matrix.CRITICAL.CRITICAL}/${crit.support})`,
-                `${fails}/${r.redTeam.length}`,
-                secs(r.latency.processing.p95),
-                `$${r.costPerTicket.toFixed(6)}`,
-            ],
-        ],
-    );
+  lines.push('## Latency', '');
+  table(
+    ['', 'p50', 'p95', 'max', 'n'],
+    [
+      ['Submit → 202', secs(r.latency.ack.p50), secs(r.latency.ack.p95), secs(r.latency.ack.max), r.latency.ack.count],
+      [
+        'Submit → draft',
+        secs(r.latency.processing.p50),
+        secs(r.latency.processing.p95),
+        secs(r.latency.processing.max),
+        r.latency.processing.count,
+      ],
+    ],
+  );
 
-    lines.push('## Outcomes', '');
-    table(Object.keys(r.outcomes), [Object.values(r.outcomes)]);
-
-    lines.push('## Urgency', '', 'Rows: expected. Columns: what the AI said.', '');
-    table(
-        ['expected \\ AI', ...COLUMNS],
-        LEVELS.map((l) => [l, ...COLUMNS.map((c) => r.matrix[l][c])]),
-    );
-    table(
-        ['Level', 'Support', 'Recall', 'Precision'],
-        LEVELS.map((l) => {
-            const s = r.levels[l];
-            return [l, s.support, s.support ? pct(s.recall) : 'n/a', s.predicted ? pct(s.precision) : 'n/a'];
-        }),
-    );
-
-    lines.push('### By category', '');
-    table(
-        ['Category', 'Model accuracy', 'Correct / processed'],
-        Object.entries(r.byCategory).map(([k, a]) => [
-            k,
-            a.processed ? pct(a.model) : 'n/a',
-            `${a.correct}/${a.processed}`,
-        ]),
-    );
-
-    lines.push('## Red-team (automatic verdicts, confirm by hand)', '');
-    table(
-        ['Ticket', 'Attack', 'Verdict', 'Reasons'],
-        r.redTeam.map((x) => [x.id, x.attack, x.verdict, x.reasons.join('; ') || '-']),
-    );
-
-    lines.push('## Reply flags', '');
-    const flagged = r.replyChecks.filter((c) => c.missing.length || c.forbidden.length);
-    if (flagged.length === 0) lines.push('None.', '');
-    else
-        table(
-            ['Ticket', 'Missing', 'Forbidden'],
-            flagged.map((c) => [c.id, c.missing.join(', ') || '-', c.forbidden.join(', ') || '-']),
-        );
-
-    lines.push('## Latency', '');
-    table(
-        ['', 'p50', 'p95', 'max', 'n'],
-        [
-            [
-                'Submit → 202',
-                secs(r.latency.ack.p50),
-                secs(r.latency.ack.p95),
-                secs(r.latency.ack.max),
-                r.latency.ack.count,
-            ],
-            [
-                'Submit → draft',
-                secs(r.latency.processing.p50),
-                secs(r.latency.processing.p95),
-                secs(r.latency.processing.max),
-                r.latency.processing.count,
-            ],
-        ],
-    );
-
-    lines.push('## Cost', '');
-    table(
-        ['Invocations', 'Throttled', 'Input tokens', 'Output tokens', 'Cost / ticket'],
-        [
-            [
-                r.usage.invocations,
-                r.usage.throttles,
-                r.usage.inputTokens,
-                r.usage.outputTokens,
-                `$${r.costPerTicket.toFixed(6)}`,
-            ],
-        ],
-    );
-    lines.push(
-        `Prices: $${m.pricePerMillion.input}/M input, $${m.pricePerMillion.output}/M output (approximate). Model only.`,
-        '',
-    );
-    return lines.join('\n');
+  lines.push('## Cost', '');
+  table(
+    ['Invocations', 'Throttled', 'Input tokens', 'Output tokens', 'Cost / ticket'],
+    [
+      [
+        r.usage.invocations,
+        r.usage.throttles,
+        r.usage.inputTokens,
+        r.usage.outputTokens,
+        `$${r.costPerTicket.toFixed(6)}`,
+      ],
+    ],
+  );
+  lines.push(
+    `Prices: $${m.pricePerMillion.input}/M input, $${m.pricePerMillion.output}/M output (approximate). Model only.`,
+    '',
+  );
+  return lines.join('\n');
 }
 
 // Written once; after that the file is yours to edit.
 export function renderReview(r: Report): string {
-    const lines = [
-        `# Manual review: ${r.meta.label}`,
-        '',
-        'Verdict for each reply: **correct**, **partly correct**, **wrong** or **invented policy**.',
-        'For red-team tickets, also **PASS** or **FAIL**. Check facts against `eval/flowboard-facts.md`.',
-        '',
+  const lines = [
+    `# Manual review: ${r.meta.label}`,
+    '',
+    'Verdict for each reply: **correct**, **partly correct**, **wrong** or **invented policy**.',
+    'For red-team tickets, also **PASS** or **FAIL**. Check facts against `eval/flowboard-facts.md`.',
+    '',
+  ];
+  for (const t of r.tickets) {
+    const ai = t.outcome === 'processed' ? t.urgency : t.outcome;
+    lines.push(
+      `### ${t.id} · ${t.category}${t.redTeam ? ` · red-team: ${t.redTeam}` : ''} · expected ${t.expected} · AI: ${ai}`,
+      '',
+    );
+    lines.push(`**Ticket:** ${t.content}`, '');
+    const flags = [
+      ...(t.missing.length ? [`missing: ${t.missing.join(', ')}`] : []),
+      ...(t.forbidden.length ? [`FORBIDDEN: ${t.forbidden.join(', ')}`] : []),
     ];
-    for (const t of r.tickets) {
-        const ai = t.outcome === 'processed' ? t.urgency : t.outcome;
-        lines.push(
-            `### ${t.id} · ${t.category}${t.redTeam ? ` · red-team: ${t.redTeam}` : ''} · expected ${t.expected} · AI: ${ai}`,
-            '',
-        );
-        lines.push(`**Ticket:** ${t.content}`, '');
-        const flags = [
-            ...(t.missing.length ? [`missing: ${t.missing.join(', ')}`] : []),
-            ...(t.forbidden.length ? [`FORBIDDEN: ${t.forbidden.join(', ')}`] : []),
-        ];
-        if (flags.length) lines.push(`**Flags:** ${flags.join(' | ')}`, '');
-        if (t.submitError) lines.push(`**Submit failed:** ${t.submitStatus} ${t.submitError}`, '');
-        lines.push(...(t.response ?? '(no reply)').split('\n').map((l) => `> ${l}`), '');
-        lines.push('**Verdict:** ', '', '**Notes:** ', '', '---', '');
-    }
-    return lines.join('\n');
+    if (flags.length) lines.push(`**Flags:** ${flags.join(' | ')}`, '');
+    if (t.submitError) lines.push(`**Submit failed:** ${t.submitStatus} ${t.submitError}`, '');
+    lines.push(...(t.response ?? '(no reply)').split('\n').map((l) => `> ${l}`), '');
+    lines.push('**Verdict:** ', '', '**Notes:** ', '', '---', '');
+  }
+  return lines.join('\n');
 }
 
 export async function writeReport(r: Report): Promise<string[]> {
-    const dir = new URL('../reports/', import.meta.url).pathname;
-    await mkdir(dir, { recursive: true });
-    // e.g. 2026-10-22T140512-v0 (UTC): sorts by time, and two runs never collide.
-    const stamp = r.meta.startedAt.slice(0, 19).replaceAll(':', '');
-    const base = `${dir}${stamp}-${r.meta.label}`;
-    const written = [`${base}.json`, `${base}.md`];
-    await writeFile(`${base}.json`, JSON.stringify(r, null, 2) + '\n');
-    await writeFile(`${base}.md`, renderMarkdown(r));
-    if (!existsSync(`${base}-review.md`)) {
-        await writeFile(`${base}-review.md`, renderReview(r));
-        written.push(`${base}-review.md`);
-    }
-    return written;
+  const dir = new URL('../reports/', import.meta.url).pathname;
+  await mkdir(dir, { recursive: true });
+  // e.g. 2026-10-22T140512-v0 (UTC): sorts by time, and two runs never collide.
+  const stamp = r.meta.startedAt.slice(0, 19).replaceAll(':', '');
+  const base = `${dir}${stamp}-${r.meta.label}`;
+  const written = [`${base}.json`, `${base}.md`];
+  await writeFile(`${base}.json`, JSON.stringify(r, null, 2) + '\n');
+  await writeFile(`${base}.md`, renderMarkdown(r));
+  if (!existsSync(`${base}-review.md`)) {
+    await writeFile(`${base}-review.md`, renderReview(r));
+    written.push(`${base}-review.md`);
+  }
+  return written;
 }
