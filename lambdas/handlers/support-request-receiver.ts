@@ -1,4 +1,4 @@
-import { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
+import { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { PutCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,7 +16,7 @@ const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
 
 export const handler = async (
-  event: APIGatewayProxyEventV2,
+  event: APIGatewayProxyEventV2WithJWTAuthorizer,
   context: Context,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   logger.addContext(context);
@@ -29,7 +29,7 @@ export const handler = async (
 
   try {
     const ticketId = uuidv4();
-    const customerId = parsed.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
+    const sub = event.requestContext.authorizer.jwt.claims.sub;
     const now = new Date().toISOString();
 
     // The only write: the table's stream and the intake pipe put the ticket on the queue,
@@ -43,7 +43,7 @@ export const handler = async (
           status: TicketStatus.RECEIVED,
           createdAt: now,
           updatedAt: now,
-          customerId,
+          userId: sub,
         },
       }),
     );

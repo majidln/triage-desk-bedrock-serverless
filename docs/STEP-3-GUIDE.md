@@ -31,7 +31,7 @@ An HTTP API has no API keys or usage plans; those are REST API features. Settle 
 
 | Option | Gives you | Costs you |
 |---|---|---|
-| HTTP API + **JWT authorizer** (Cognito) | `401` without a token, `customerId` from the token's claims | A user pool, and clients must sign in |
+| HTTP API + **JWT authorizer** (Cognito) | `401` without a token, `userId` from the token's claims | A user pool, and clients must sign in |
 | HTTP API + **JWT authorizer** (Auth0) | The same, with an identity provider outside AWS. Issuer is your tenant URL, audience your Auth0 API identifier | An Auth0 tenant (free tier is enough), and a second place to configure and secure |
 | HTTP API + **Lambda authorizer** | Any check you like, e.g. a client key | A function to write and secure |
 | Switch to a **REST API** + API key + usage plan | Per-client quotas and throttling | A migration; a key is an identifier, not strong auth |
@@ -39,7 +39,7 @@ An HTTP API has no API keys or usage plans; those are REST API features. Settle 
 Whatever you choose:
 - **Throttling:** set stage-level `ThrottlingBurstLimit` and `ThrottlingRateLimit` (`DefaultRouteSettings`). Size them from the ticket volume in §1.1 and the processor's concurrency.
 - **Size:** reject a `content` over a limit you pick (a few thousand characters) in the receiver, with `413` or `400`. API Gateway's own limit is far too large to help.
-- **Fetch:** a customer can read only their own tickets. Compare the ticket's `customerId` with the caller's, and answer `404`, not `403`, so ids can't be probed.
+- **Fetch:** a customer can read only their own tickets. Compare the ticket's `userId` with the caller's, and answer `404`, not `403`, so ids can't be probed.
 
 ---
 
@@ -101,7 +101,7 @@ Zero results is the exit criterion. Run it once before your changes, so you know
 ## 7. Tests
 
 In `lambdas/tests/unit/`:
-- Receiver: oversized content → `413`/`400`; `customerId` taken from the authorizer, not the body.
+- Receiver: oversized content → `413`/`400`; `userId` taken from the authorizer, not the body.
 - Fetch: another customer's ticket → `404`.
 - Model: the ticket is in the user message inside the delimiters and a `guardContent` block, never in `system`; `guardrailConfig` is set.
 - Model: `stopReason: guardrail_intervened` → whatever you decided in section 4.

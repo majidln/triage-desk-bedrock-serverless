@@ -8,6 +8,10 @@ Parameters:
   ModelId:
     Type: String
     Default: amazon.nova-lite-v1:0
+  Auth0Domain :
+    Type: String
+  Auth0Audience:
+    Type: String
   AlertEmail:
     Type: String
     Default: ''
@@ -30,6 +34,15 @@ Resources:
     Properties:
       StageName: !Ref StageName
       Name: !Sub '${AWS::StackName}-HttpApi'
+      Auth:
+        Authorizers:
+          Auth0:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub 'https://${Auth0Domain}/'
+              audience:
+                - !Ref Auth0Audience
+        DefaultAuthorizer: Auth0
 
   SupportRequestReceiverFunction:
     Type: AWS::Serverless::Function

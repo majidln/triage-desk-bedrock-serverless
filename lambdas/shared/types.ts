@@ -53,7 +53,7 @@ export interface SupportTicket {
   status: TicketStatus;
   createdAt: string;
   updatedAt: string;
-  customerId: string;
+  userId: string;
   urgency?: Urgency;
   response?: string;
   analyticsGeneratedAt?: string;

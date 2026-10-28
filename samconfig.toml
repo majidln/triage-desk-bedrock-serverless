@@ -17,6 +17,7 @@ lint = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
+parameter_overrides = "Auth0Domain=triage-desk.eu.auth0.com Auth0Audience=https://triage-desk-api"
 
 [default.package.parameters]
 resolve_s3 = true
