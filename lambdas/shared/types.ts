@@ -72,9 +72,11 @@ export interface CreateTicketResponse {
   ticketId: string;
 }
 
-// What GET /support-request returns. `response` is set only once the ticket is PROCESSED.
-export interface FetchTicketResponse {
+// A ticket as its customer sees it: GET /support-request returns one, GET /support-requests a
+// page of them. `response` is set only once the ticket is PROCESSED.
+export interface TicketView {
   ticketId: string;
   status: TicketStatus;
+  createdAt: string;
   response?: string;
 }
