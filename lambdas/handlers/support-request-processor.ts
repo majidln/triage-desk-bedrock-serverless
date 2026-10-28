@@ -2,7 +2,15 @@ import { AttributeValue, ConditionalCheckFailedException, DynamoDBClient } from 
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { Context, SQSBatchItemFailure, SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
-import { TicketStatus, SupportTicket, SupportTicketMessage, TicketTriage, TicketFailure } from '../shared/types';
+import {
+  TicketStatus,
+  SupportTicket,
+  SupportTicketMessage,
+  TicketTriage,
+  TicketFailure,
+  LlmUsage,
+  TriageResult,
+} from '../shared/types';
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
@@ -21,7 +29,9 @@ const config = {
 const TICKET_BUDGET_MS = MODEL_ATTEMPT_TIMEOUT_MS * MODEL_MAX_ATTEMPTS + 5_000;
 
 const ddClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(ddClient);
+// A token count Bedrock didn't report is undefined; it's left out of the item rather than
+// failing the save (and retrying a ticket that was triaged).
+const docClient = DynamoDBDocumentClient.from(ddClient, { marshallOptions: { removeUndefinedValues: true } });
 const snsClient = new SNSClient({});
 
 // How one record ended when processRecord returns. A record that throws isn't an outcome:
@@ -79,9 +89,9 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
   // Only the Bedrock call is classified: DynamoDB and SNS errors below are always retried
   // (DynamoDB also has a ValidationException, which isn't Bedrock's permanent one).
   // There's no fallback answer: a transient error is retried, a permanent one marks the ticket FAILED.
-  let triage: TicketTriage;
+  let result: TriageResult;
   try {
-    triage = await invokeTriageModel(message.content, config.modelId);
+    result = await invokeTriageModel(message.content, config.modelId);
   } catch (err) {
     if (classifyError(err) === 'transient') {
       throw err;
@@ -95,9 +105,10 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     return 'failed';
   }
 
-  const result = await saveTriage(ticketId, triage);
-  if (!result.updated) {
-    return alreadyHandled(message, result.current, messageId);
+  const { triage, usage } = result;
+  const saved = await saveTriage(ticketId, triage, usage);
+  if (!saved.updated) {
+    return alreadyHandled(message, saved.current, messageId);
   }
   await notifyAndRecord(message, triage);
 
@@ -105,6 +116,9 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     ticketId,
     messageId,
     urgency: triage.urgency,
+    modelId: usage.modelId,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedAt,
   });
   return 'processed';
@@ -186,16 +200,17 @@ async function updateIfReceived(input: UpdateCommandInput): Promise<GuardedUpdat
   }
 }
 
-async function saveTriage(ticketId: string, triage: TicketTriage): Promise<GuardedUpdate> {
+async function saveTriage(ticketId: string, triage: TicketTriage, usage: LlmUsage): Promise<GuardedUpdate> {
   const now = new Date().toISOString();
   return updateIfReceived({
     TableName: config.tableName,
     Key: {
       id: ticketId,
     },
-    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics',
+    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics, #usage = :usage',
     ExpressionAttributeNames: {
       '#status': 'status',
+      '#usage': 'usage',
     },
     ExpressionAttributeValues: {
       ':status': TicketStatus.PROCESSED,
@@ -204,6 +219,7 @@ async function saveTriage(ticketId: string, triage: TicketTriage): Promise<Guard
         ...triage,
         generatedAt: now,
       },
+      ':usage': usage,
     },
   });
 }

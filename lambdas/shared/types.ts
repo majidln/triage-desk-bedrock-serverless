@@ -23,6 +23,20 @@ export interface TicketTriage {
   response: string;
 }
 
+// What one model call used. Stored in DynamoDB under the `usage` attribute. The counts are
+// optional because Bedrock may not report them; a missing count never fails a ticket.
+export interface LlmUsage {
+  modelId: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+// What a model call returns: the answer, and what it cost.
+export interface TriageResult {
+  triage: TicketTriage;
+  usage: LlmUsage;
+}
+
 export interface TicketFailure {
   errorName: string;
   message: string;
@@ -40,6 +54,7 @@ export interface SupportTicket {
   response?: string;
   analyticsGeneratedAt?: string;
   failure?: TicketFailure;
+  usage?: LlmUsage;
   notifiedAt?: string;
 }
 

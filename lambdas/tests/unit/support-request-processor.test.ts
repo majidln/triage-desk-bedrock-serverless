@@ -202,6 +202,37 @@ describe('support-request-processor', () => {
       await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
     });
 
+    it('saves the tokens next to the triage, which keeps its shape', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await processRecord(exampleRecord(1));
+
+      const [save] = guardedUpdates();
+      expect(save.ExpressionAttributeValues?.[':analytics']).toEqual({
+        urgency: 'HIGH',
+        response: 'Here is how.',
+        generatedAt: expect.any(String),
+      });
+      expect(save.ExpressionAttributeValues?.[':usage']).toEqual({
+        modelId: 'amazon.nova-lite-v1:0',
+        inputTokens: 86,
+        outputTokens: 185,
+      });
+    });
+
+    it("is still 'processed' when Bedrock reports no token counts", async () => {
+      const toolUse = { toolUseId: 'tooluse-1', name: 'record_triage', input: { urgency: 'LOW', response: 'Hi' } };
+      bedrockMock.on(ConverseCommand).resolves({
+        output: { message: { role: 'assistant', content: [{ toolUse }] } },
+        stopReason: 'tool_use',
+      } as never);
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
+      const [save] = guardedUpdates();
+      expect(save.ExpressionAttributeValues?.[':usage']).toEqual({ modelId: 'amazon.nova-lite-v1:0' });
+    });
+
     it("is 'failed' on a permanent Bedrock error", async () => {
       bedrockMock.on(ConverseCommand).rejects(new ValidationException(sdkError));
       ddbMock.on(UpdateCommand).resolves({});

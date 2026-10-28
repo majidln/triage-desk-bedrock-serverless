@@ -3,7 +3,7 @@
 // changes only this file.
 import { BedrockRuntimeClient, ConverseCommand, ToolConfiguration } from '@aws-sdk/client-bedrock-runtime';
 import { PermanentError } from './classify-error';
-import { TicketTriage, Urgency } from './types';
+import { TicketTriage, TriageResult, Urgency } from './types';
 
 // Limits for one model call. Nova Lite answers a ticket in about 1–3 s, so 15 s per attempt
 // is generous; without a limit a hanging call would use up the whole Lambda timeout.
@@ -15,9 +15,10 @@ const bedrockClient = new BedrockRuntimeClient({
   requestHandler: { requestTimeout: MODEL_ATTEMPT_TIMEOUT_MS },
 });
 
-// Asks the model to triage one ticket. Bedrock errors are thrown as they are, and an
-// answer we can't use is thrown as a PermanentError; the caller decides what to retry.
-export async function invokeTriageModel(content: string, modelId: string): Promise<TicketTriage> {
+// Asks the model to triage one ticket, and reports the tokens it used. Bedrock errors are thrown
+// as they are, and an answer we can't use is thrown as a PermanentError; the caller decides what
+// to retry.
+export async function invokeTriageModel(content: string, modelId: string): Promise<TriageResult> {
   const inferenceConfig = {
     maxTokens: 512,
     temperature: 0.1,
@@ -46,7 +47,14 @@ export async function invokeTriageModel(content: string, modelId: string): Promi
   if (toolUse?.input === undefined) {
     throw new PermanentError(`Model didn't call record_triage (stopReason: ${response.stopReason})`);
   }
-  return parseModelAnswer(toolUse.input);
+  return {
+    triage: parseModelAnswer(toolUse.input),
+    usage: {
+      modelId,
+      inputTokens: response.usage?.inputTokens,
+      outputTokens: response.usage?.outputTokens,
+    },
+  };
 }
 
 export function buildToolConfig(): ToolConfiguration {
