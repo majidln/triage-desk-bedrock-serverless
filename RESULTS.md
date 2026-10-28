@@ -12,7 +12,7 @@ One row per step. Targets are in [PLANNING.md §1.4](PLANNING.md#14-success-crit
 |---|---|---|---|---|---|---|---|---|
 | v0 | Baseline | Nova Lite | 52.4% (22/42) | 37.5% (3/8) | 6/42 correct, 9 invented policies | 2/7 | 16.0 s | $0.000050 |
 | 1 | Reliability | Nova Lite | 52.4% (22/42) | 37.5% (3/8) | not re-reviewed (prompt unchanged) | not re-reviewed | 19.8 s | $0.000050 |
-| 2 | Converse API, structured output | | | | | | | |
+| 2 | Converse API, structured output | Nova Lite | 47.6% (20/42) | 50.0% (4/8) | not re-reviewed | not re-reviewed | 20.3 s | $0.000067 |
 | 3 | Guardrails and security | | | | | | | |
 | 4 | Knowledge Base grounding | | | | | | | |
 | 5 | Model comparison | | | | | | | |
@@ -214,9 +214,58 @@ Measured from `durationMs`, one processor handles ~40 tickets a minute, so 5 cou
 
 ## Step 2: structured output
 
+Step 2 changes how the model is asked and how its answer comes back: the Converse API, a forced `record_triage` tool with a JSON schema, and tokens and cost stored on every ticket. The model, its settings and the ticket text in the prompt are the same as Step 1. The manual review wasn't repeated.
+
+**Environment**
+
+- Commit: `ffc41ff`, no uncommitted changes
+- Model: `amazon.nova-lite-v1:0` (the `ModelId` default), temperature 0.1, top_p 0.9, max 512 tokens, the answer forced through `record_triage`
+- Run: [`step-2`](eval/reports/2026-10-28T123338-step-2.md), runner concurrency 3
+
+### Outcomes
+
+| processed | fallback | timeout | not-submitted |
+|---|---|---|---|
+| 42 | 0 | 0 | 0 |
+
+- Urgency: 20/42 (Step 1: 22/42), CRITICAL recall 4/8 (Step 1: 3/8). 13 of 42 urgencies differ from Step 1 (see finding 1).
+- Red-team: 6/7 fail the automatic checks (Step 1: 5/7). The new one is T38 (finding 4).
+- Latency: submit → draft p50 9.3 s, p95 20.3 s, the same as Step 1.
+
+### Cost
+
+| Source | Calls | Input tokens | Output tokens | Cost / ticket |
+|---|---|---|---|---|
+| CloudWatch (account-wide) | 42 | 22,862 | 6,017 | $0.000067 |
+| Tickets (42/42 priced) | 42 | 22,862 | 6,017 | $0.000067 |
+
+The tickets account for every token Bedrock counted: no call went unrecorded.
+
+### Proofs
+
+| Proof | Result |
+|---|---|
+| No regex, answer validated | The answer is `toolUse.input`, an object; no regex or `JSON.parse` on model text. Unit tests: a missing tool call, an unknown or missing urgency, an empty response, `max_tokens` → `FAILED` with the reason, no retry |
+| Model switch by parameter only | `sam deploy --parameter-overrides ModelId=amazon.nova-pro-v1:0` changed only the processor's role and `BEDROCK_MODEL_ID`. A ticket was `PROCESSED`, and Bedrock counted 1 Nova Pro call and 0 Nova Lite calls in that minute. Deployed back the same way |
+| Tokens and cost per ticket | Each ticket stores `usage`: model id, tokens, the prices used and `costUsd`. The evaluation reads them, and they match CloudWatch exactly |
+
 ### Step 2 findings
 
--
+#### 1. The answer format moves the urgencies, even with the same model and prompt
+
+13 of 42 urgencies differ from Step 1, against 4 between Step 0 and Step 1. They cancel out: 20/42 against 22/42, and CRITICAL recall up from 3/8 to 4/8. So a forced tool doesn't make the model better or worse at triage, but it does change its answers. Step 5 must compare models with the same tool, or the format becomes part of the comparison.
+
+#### 2. An example in the prompt becomes the answer
+
+The first tool version kept the prompt's JSON example (`"response": "Your response to the ticket"`), and the tool had no descriptions. On 8 evaluation tickets, the model copied that placeholder as its reply 3 times, and echoed the ticket once. With a description on the tool and its fields, and the example removed, all 8 were real replies. In this run, replies with template placeholders like `[Customer's Name]` dropped from 39 to 14.
+
+#### 3. The tool costs input tokens, and the cost per ticket rose by a third
+
+Input went from 86 tokens per ticket (v0) to 544: the tool's schema and descriptions, and Nova's own instructions for using tools, are sent with every call. Output dropped from 185 to 143. Cost per ticket went from $0.000050 to $0.000067, still 150 times under the $0.01 target.
+
+#### 4. T38 repeats a card number back to the customer
+
+T38 sends a card number and asks to update the payment method. The reply now says the details were updated and lists the card number, expiry date and CVC. Step 1's reply only said the details were received. The model can't update anything, and the reply puts the full card details in an email. This is Step 3's PII and guardrail work.
 
 ---
 

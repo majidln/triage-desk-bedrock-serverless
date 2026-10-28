@@ -9,71 +9,71 @@ import { logger } from '../shared/logger';
 
 // Read once at cold start: a missing variable fails here, not on the first request.
 const config = {
-    tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
+  tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
 };
 
 const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
 
 export const handler = async (
-    event: APIGatewayProxyEventV2,
-    context: Context,
+  event: APIGatewayProxyEventV2,
+  context: Context,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
-    logger.addContext(context);
+  logger.addContext(context);
 
-    // A bad request is the client's mistake: 400 with the reason, never a 500
-    const parsed = parseRequest(event.body);
-    if (typeof parsed === 'string') {
-        return json(400, { message: parsed });
-    }
+  // A bad request is the client's mistake: 400 with the reason, never a 500
+  const parsed = parseRequest(event.body);
+  if (typeof parsed === 'string') {
+    return json(400, { message: parsed });
+  }
 
-    try {
-        const ticketId = uuidv4();
-        const customerId = parsed.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
-        const now = new Date().toISOString();
+  try {
+    const ticketId = uuidv4();
+    const customerId = parsed.customerId || 'customer-id-from-api-gateway'; // TODO: get customer id from api gateway
+    const now = new Date().toISOString();
 
-        // The only write: the table's stream and the intake pipe put the ticket on the queue,
-        // so there's no second step that could fail and leave the ticket stuck in RECEIVED.
-        await docClient.send(
-            new PutCommand({
-                TableName: config.tableName,
-                Item: {
-                    id: ticketId,
-                    content: parsed.content,
-                    status: TicketStatus.RECEIVED,
-                    createdAt: now,
-                    updatedAt: now,
-                    customerId,
-                },
-            }),
-        );
+    // The only write: the table's stream and the intake pipe put the ticket on the queue,
+    // so there's no second step that could fail and leave the ticket stuck in RECEIVED.
+    await docClient.send(
+      new PutCommand({
+        TableName: config.tableName,
+        Item: {
+          id: ticketId,
+          content: parsed.content,
+          status: TicketStatus.RECEIVED,
+          createdAt: now,
+          updatedAt: now,
+          customerId,
+        },
+      }),
+    );
 
-        logger.info('TicketReceived', { ticketId, contentLength: parsed.content.length });
-        const response: CreateTicketResponse = {
-            message: 'new ticket has been created for this request',
-            ticketId,
-        };
-        return json(202, response);
-    } catch (err) {
-        logger.error('RequestFailed', { error: err });
-        return json(500, { message: 'some error happened' });
-    }
+    logger.info('TicketReceived', { ticketId, contentLength: parsed.content.length });
+    const response: CreateTicketResponse = {
+      message: 'new ticket has been created for this request',
+      ticketId,
+    };
+    return json(202, response);
+  } catch (err) {
+    logger.error('RequestFailed', { error: err });
+    return json(500, { message: 'some error happened' });
+  }
 };
 
 // The request body as a ticket request, or the reason it isn't one.
 function parseRequest(body: string | undefined): CreateTicketRequest | string {
-    let request: unknown;
-    try {
-        request = JSON.parse(body ?? '');
-    } catch {
-        return 'body must be JSON';
-    }
-    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
-        return 'body must be a JSON object';
-    }
-    const { content, customerId } = request as Record<string, unknown>;
-    if (typeof content !== 'string' || content.trim() === '') {
-        return 'content is required';
-    }
-    return { content, customerId: typeof customerId === 'string' ? customerId : undefined };
+  let request: unknown;
+  try {
+    request = JSON.parse(body ?? '');
+  } catch {
+    return 'body must be JSON';
+  }
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+    return 'body must be a JSON object';
+  }
+  const { content, customerId } = request as Record<string, unknown>;
+  if (typeof content !== 'string' || content.trim() === '') {
+    return 'content is required';
+  }
+  return { content, customerId: typeof customerId === 'string' ? customerId : undefined };
 }

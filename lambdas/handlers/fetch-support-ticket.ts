@@ -8,7 +8,7 @@ import { logger } from '../shared/logger';
 
 // Read once at cold start: a missing variable fails here, not on the first request.
 const config = {
-    tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
+  tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
 };
 
 // Ticket ids are UUIDs (the receiver makes them). Checking the format first turns a
@@ -19,37 +19,35 @@ const ddClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddClient);
 
 export const handler = async (
-    event: APIGatewayProxyEventV2,
-    context: Context,
+  event: APIGatewayProxyEventV2,
+  context: Context,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
-    logger.addContext(context);
+  logger.addContext(context);
 
-    const ticketId = event.queryStringParameters?.ticketId;
-    if (!ticketId) {
-        return json(400, { message: 'ticketId is required' });
-    }
-    if (!TICKET_ID.test(ticketId)) {
-        return json(400, { message: 'ticketId must be a UUID' });
+  const ticketId = event.queryStringParameters?.ticketId;
+  if (!ticketId) {
+    return json(400, { message: 'ticketId is required' });
+  }
+  if (!TICKET_ID.test(ticketId)) {
+    return json(400, { message: 'ticketId must be a UUID' });
+  }
+
+  try {
+    const { Item: item } = await docClient.send(new GetCommand({ TableName: config.tableName, Key: { id: ticketId } }));
+    if (!item) {
+      return json(404, { message: 'ticket not found' });
     }
 
-    try {
-        const { Item: item } = await docClient.send(
-            new GetCommand({ TableName: config.tableName, Key: { id: ticketId } }),
-        );
-        if (!item) {
-            return json(404, { message: 'ticket not found' });
-        }
-
-        // What the customer may see: the state, and the reply once there is one. Not the
-        // urgency (that's for the support team) or why a ticket failed (internal detail).
-        const status = item.status as TicketStatus;
-        const response: FetchTicketResponse = { ticketId, status };
-        if (status === TicketStatus.PROCESSED) {
-            response.response = item.analytics?.response;
-        }
-        return json(200, response);
-    } catch (err) {
-        logger.error('RequestFailed', { ticketId, error: err });
-        return json(500, { message: 'some error happened' });
+    // What the customer may see: the state, and the reply once there is one. Not the
+    // urgency (that's for the support team) or why a ticket failed (internal detail).
+    const status = item.status as TicketStatus;
+    const response: FetchTicketResponse = { ticketId, status };
+    if (status === TicketStatus.PROCESSED) {
+      response.response = item.analytics?.response;
     }
+    return json(200, response);
+  } catch (err) {
+    logger.error('RequestFailed', { ticketId, error: err });
+    return json(500, { message: 'some error happened' });
+  }
 };

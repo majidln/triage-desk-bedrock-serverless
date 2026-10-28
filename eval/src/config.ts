@@ -13,8 +13,8 @@ export const COLLECT_TIMEOUT_MS = 180_000;
 // v0's canned replies (lambdas/handlers/support-request-processor.ts). A ticket
 // with one of these was not answered by the model, whatever its status says.
 export const FALLBACK_RESPONSES = [
-    'Thank you for contacting support. We have received your request and will get back to you soon.',
-    'Thank you for contacting support.',
+  'Thank you for contacting support. We have received your request and will get back to you soon.',
+  'Thank you for contacting support.',
 ];
 
 // The model v0 calls (BEDROCK_MODEL_ID in template.yaml) and its approximate

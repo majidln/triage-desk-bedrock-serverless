@@ -64,6 +64,14 @@ To receive the pipeline's alarms by email, pass an address when deploying, then 
 sam deploy --parameter-overrides AlertEmail=you@example.com
 ```
 
+The model is a parameter too, `amazon.nova-lite-v1:0` by default. The processor's model id and its IAM permission both come from it, so switching is a deploy with no code change:
+
+```bash
+sam deploy --parameter-overrides ModelId=amazon.nova-pro-v1:0
+```
+
+Every ticket records the tokens it used, and its cost when the model is in `lambdas/shared/model-prices.ts`. Any model can be deployed; one without a price logs `ModelPriceMissing` once per cold start, and its tickets have tokens but no cost.
+
 The support team subscribes to the ticket notifications topic (output `SupportTicketNotificationTopicArn`) in the console or with the CLI.
 
 ## Local Development
@@ -136,7 +144,7 @@ Run the scoring tests (no AWS needed):
 cd eval && npm test
 ```
 
-Run the evaluation against the deployed stack. Use the `HttpApiUrl` output from `sam deploy`, and run nothing else on the same Bedrock model while it runs, because cost is read from account-wide metrics:
+Run the evaluation against the deployed stack. Use the `HttpApiUrl` output from `sam deploy`, and run nothing else on the same Bedrock model while it runs: the report compares the cost the tickets recorded with Bedrock's account-wide CloudWatch metrics, and other use of the model shows up as a difference:
 
 ```bash
 cd eval && API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com/Dev TABLE_NAME=triage-desk-Table npx tsx run.ts --label v0
@@ -194,14 +202,15 @@ The processor writes structured JSON logs with [Powertools for AWS Lambda](https
 
 | `message` | Level | Meaning |
 |---|---|---|
-| `TicketProcessed` | INFO | Triaged, saved and the support team notified (`urgency`, `durationMs`) |
+| `TicketProcessed` | INFO | Triaged, saved and the support team notified (`urgency`, `modelId`, `inputTokens`, `outputTokens`, `costUsd`, `durationMs`) |
+| `ModelPriceMissing` | WARN | Once per cold start: the deployed model isn't in the price table, so tickets have no cost |
 | `RecordRetried` | WARN | A transient error; SQS retries the message, then sends it to the DLQ |
 | `TicketFailed` | ERROR | A permanent error; the ticket is marked `FAILED` with the reason |
 | `PoisonedMessage` | ERROR | A message that isn't a readable ticket; dropped |
 | `TicketNotFound` | ERROR | A message for a ticket that isn't in the table; dropped |
 | `DuplicateMessage` | INFO | SQS delivered a ticket that was already handled; nothing done again |
 
-One line per message, for how it ended: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
+One line per message, for how it ended, plus `ModelPriceMissing` at start-up: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
 
 ### CloudWatch Alarms
 

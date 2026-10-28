@@ -196,13 +196,13 @@ Partial batch responses (`ReportBatchItemFailures`), retryable vs. permanent Bed
 ### Step 2: The model answers in prose, and we parse it with a regex
 The reply format is a request in the prompt, not a contract. The urgency value isn't validated, and swapping models means rewriting the request body.
 
-Move from `InvokeModel` to the **Converse API**. Define the output as a tool with a JSON schema and force the model to call it. Validate the result. Log token usage per ticket.
+Move from `InvokeModel` to the **Converse API**. Define the output as a tool with a JSON schema and force the model to call it. Validate the result. Log token usage per ticket. See [STEP-2-GUIDE.md](docs/STEP-2-GUIDE.md).
 
 **Exit:**
-- [ ] No regex in the processor; output validated against the schema.
-- [ ] Switching the model is a parameter change only, proven by deploying a second model.
-- [ ] Input/output tokens and cost stored per ticket.
-- [ ] Evaluation re-run, `step-2` row.
+- [x] No regex in the processor; output validated against the schema. *(a forced `record_triage` tool; the input is checked, and an unusable answer is `FAILED`)*
+- [x] Switching the model is a parameter change only, proven by deploying a second model. *(`ModelId=amazon.nova-pro-v1:0`, a ticket processed by Nova Pro, then back)*
+- [x] Input/output tokens and cost stored per ticket. *(they match CloudWatch exactly in the `step-2` run)*
+- [x] Evaluation re-run, `step-2` row. *(20/42, CRITICAL 4/8, $0.000067 per ticket)*
 
 *Free.*
 

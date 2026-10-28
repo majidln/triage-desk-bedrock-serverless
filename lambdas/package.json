@@ -1,19 +1,21 @@
 {
-  "name": "Ai Powered Customer Support Pipeline",
+  "name": "triage-desk-lambdas",
   "version": "0.0.1",
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "format": "prettier --write . --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+    "format:check": "prettier --check . --ignore-path ../.gitignore --ignore-path ../.prettierignore"
   },
   "dependencies": {
     "@aws-lambda-powertools/logger": "^2.36.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.968.0",
-    "@aws-sdk/client-dynamodb": "^3.966.0",
-    "@aws-sdk/client-sns": "^3.968.0",
-    "@aws-sdk/lib-dynamodb": "^3.966.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1158.0",
+    "@aws-sdk/client-dynamodb": "^3.1158.0",
+    "@aws-sdk/client-sns": "^3.1158.0",
+    "@aws-sdk/lib-dynamodb": "^3.1158.0",
     "@aws-sdk/util-dynamodb": "^3.996.9",
     "esbuild": "^0.14.14",
     "uuid": "^13.0.0"
