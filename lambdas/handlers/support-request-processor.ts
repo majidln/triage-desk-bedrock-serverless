@@ -16,6 +16,7 @@ import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
 import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
 import { logger } from '../shared/logger';
+import { priceFor } from '../shared/model-prices';
 
 // Read once at cold start: a missing variable fails here, not on the first ticket.
 const config = {
@@ -23,6 +24,12 @@ const config = {
   topicArn: requireEnv('SNS_TOPIC_ARN'),
   modelId: requireEnv('BEDROCK_MODEL_ID'),
 };
+
+// Any model can be deployed; one without a price still triages tickets, they just have no
+// cost. Said once per cold start rather than on every ticket.
+if (priceFor(config.modelId) === undefined) {
+  logger.warn('ModelPriceMissing', { modelId: config.modelId });
+}
 
 // The longest one ticket can take: every model attempt timing out, plus a few seconds for
 // the SDK's backoff, DynamoDB and SNS. A ticket is only started with at least this much left.
@@ -119,6 +126,7 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     modelId: usage.modelId,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    costUsd: usage.costUsd,
     durationMs: Date.now() - startedAt,
   });
   return 'processed';

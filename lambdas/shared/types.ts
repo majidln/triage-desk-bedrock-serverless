@@ -24,11 +24,15 @@ export interface TicketTriage {
 }
 
 // What one model call used. Stored in DynamoDB under the `usage` attribute. The counts are
-// optional because Bedrock may not report them; a missing count never fails a ticket.
+// optional because Bedrock may not report them; a missing count never fails a ticket. The cost
+// and the prices it used are set only when the model has a price (see model-prices.ts).
 export interface LlmUsage {
   modelId: string;
   inputTokens?: number;
   outputTokens?: number;
+  inputPricePerM?: number;
+  outputPricePerM?: number;
+  costUsd?: number;
 }
 
 // What a model call returns: the answer, and what it cost.

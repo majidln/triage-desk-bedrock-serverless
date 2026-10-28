@@ -3,6 +3,7 @@
 // changes only this file.
 import { BedrockRuntimeClient, ConverseCommand, ToolConfiguration } from '@aws-sdk/client-bedrock-runtime';
 import { PermanentError } from './classify-error';
+import { callCost } from './model-prices';
 import { TicketTriage, TriageResult, Urgency } from './types';
 
 // Limits for one model call. Nova Lite answers a ticket in about 1–3 s, so 15 s per attempt
@@ -47,13 +48,11 @@ export async function invokeTriageModel(content: string, modelId: string): Promi
   if (toolUse?.input === undefined) {
     throw new PermanentError(`Model didn't call record_triage (stopReason: ${response.stopReason})`);
   }
+  const inputTokens = response.usage?.inputTokens;
+  const outputTokens = response.usage?.outputTokens;
   return {
     triage: parseModelAnswer(toolUse.input),
-    usage: {
-      modelId,
-      inputTokens: response.usage?.inputTokens,
-      outputTokens: response.usage?.outputTokens,
-    },
+    usage: { modelId, inputTokens, outputTokens, ...callCost(modelId, inputTokens, outputTokens) },
   };
 }
 

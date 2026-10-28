@@ -202,7 +202,7 @@ describe('support-request-processor', () => {
       await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
     });
 
-    it('saves the tokens next to the triage, which keeps its shape', async () => {
+    it('saves the tokens and their cost next to the triage, which keeps its shape', async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
       await processRecord(exampleRecord(1));
@@ -217,6 +217,9 @@ describe('support-request-processor', () => {
         modelId: 'amazon.nova-lite-v1:0',
         inputTokens: 86,
         outputTokens: 185,
+        inputPricePerM: 0.06,
+        outputPricePerM: 0.24,
+        costUsd: 0.00004956, // (86 × 0.06 + 185 × 0.24) / 1M
       });
     });
 
