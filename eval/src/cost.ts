@@ -3,6 +3,7 @@
 
 import { CloudWatchClient, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
 import { MINUTE_MS, PRICE_PER_M_INPUT, PRICE_PER_M_OUTPUT, REGION } from './config.ts';
+import type { Collected } from './types.ts';
 import { ratio } from './util.ts';
 
 const cloudwatch = new CloudWatchClient({ region: REGION });
@@ -64,4 +65,32 @@ export async function waitForUsage(modelId: string, start: Date, end: Date): Pro
 export function costPerTicket(usage: BedrockUsage, tickets: number): number {
   const cost = (usage.inputTokens * PRICE_PER_M_INPUT + usage.outputTokens * PRICE_PER_M_OUTPUT) / 1_000_000;
   return ratio(cost, tickets);
+}
+
+// From Step 2 the pipeline records tokens and cost on each ticket, so the evaluation can read
+// them there: no time window, no waiting for metrics, nothing else on the account counted.
+export interface TicketCost {
+  withUsage: number; // tickets with a usage record
+  priced: number; // of those, tickets with a cost (the model had a price)
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number; // sum over the priced tickets
+}
+
+export function ticketCost(collected: Collected[]): TicketCost {
+  const usages = collected.flatMap((c) => (c.usage ? [c.usage] : []));
+  const priced = usages.filter((u) => u.costUsd !== undefined);
+  return {
+    withUsage: usages.length,
+    priced: priced.length,
+    inputTokens: usages.reduce((sum, u) => sum + (u.inputTokens ?? 0), 0),
+    outputTokens: usages.reduce((sum, u) => sum + (u.outputTokens ?? 0), 0),
+    costUsd: priced.reduce((sum, u) => sum + u.costUsd!, 0),
+  };
+}
+
+// Cost per ticket from the tickets themselves, or undefined when it isn't known for all of
+// them: a missing cost must never read as a cheaper model.
+export function ticketCostPerTicket(cost: TicketCost): number | undefined {
+  return cost.withUsage > 0 && cost.priced === cost.withUsage ? ratio(cost.costUsd, cost.priced) : undefined;
 }

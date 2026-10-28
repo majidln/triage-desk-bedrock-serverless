@@ -4,7 +4,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, BatchGetCommandOutput, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { COLLECT_TIMEOUT_MS, FALLBACK_RESPONSES, POLL_INTERVAL_MS, REGION, TABLE_NAME } from './config.ts';
-import type { Collected, Submission } from './types.ts';
+import type { Collected, Submission, TicketUsage } from './types.ts';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 
@@ -14,6 +14,7 @@ export interface TicketItem {
   status?: string;
   createdAt: string;
   analytics?: { urgency?: string; response?: string; generatedAt?: string };
+  usage?: TicketUsage;
 }
 
 // Read up to 100 items in one call. Returns them keyed by id.
@@ -44,6 +45,7 @@ export function toCollected(submission: Submission, item: TicketItem): Collected
     urgency: item.analytics?.urgency,
     response,
     processingMs: Number.isNaN(created) || Number.isNaN(generated) ? undefined : generated - created,
+    usage: item.usage,
   };
 }
 

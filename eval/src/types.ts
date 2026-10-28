@@ -34,4 +34,13 @@ export interface Collected {
   urgency?: string; // as stored, not validated: v0 may store anything
   response?: string;
   processingMs?: number; // createdAt -> analytics.generatedAt
+  usage?: TicketUsage; // from Step 2: what the model call used, as the pipeline recorded it
+}
+
+// The `usage` attribute the pipeline stores on each ticket from Step 2 on.
+export interface TicketUsage {
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number; // absent when the model had no price: unknown, not 0
 }

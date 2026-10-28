@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import type { BedrockUsage } from './cost.ts';
+import type { BedrockUsage, TicketCost } from './cost.ts';
 import type { RedTeamResult } from './score/redteam.ts';
 import type { ReplyCheck } from './score/replies.ts';
 import { COLUMNS, LEVELS } from './score/urgency.ts';
@@ -35,6 +35,9 @@ export interface TicketRow {
   submitStatus: number; // HTTP status of the submit, 0 if no response
   submitError?: string; // why the submit failed, e.g. a throttling message
   processingMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
   missing: string[];
   forbidden: string[];
 }
@@ -62,8 +65,10 @@ export interface Report {
   redTeam: RedTeamResult[];
   replyChecks: ReplyCheck[];
   latency: { ack: Latency; processing: Latency };
-  usage: BedrockUsage;
-  costPerTicket: number;
+  usage: BedrockUsage; // CloudWatch, account-wide
+  costPerTicket: number; // from CloudWatch
+  ticketCost: TicketCost; // from the tickets (Step 2 on)
+  ticketCostPerTicket?: number; // undefined when not every ticket has a cost
   tickets: TicketRow[];
 }
 
@@ -108,6 +113,9 @@ export function ticketRows(collected: Collected[], checks: ReplyCheck[]): Ticket
       submitStatus: c.submission.status,
       submitError: c.submission.error,
       processingMs: c.processingMs,
+      inputTokens: c.usage?.inputTokens,
+      outputTokens: c.usage?.outputTokens,
+      costUsd: c.usage?.costUsd,
       missing: check?.missing ?? [],
       forbidden: check?.forbidden ?? [],
     };
@@ -159,7 +167,7 @@ export function renderMarkdown(r: Report): string {
         crit.support === 0 ? 'n/a' : `${pct(crit.recall)} (${r.matrix.CRITICAL.CRITICAL}/${crit.support})`,
         `${fails}/${r.redTeam.length}`,
         secs(r.latency.processing.p95),
-        `$${r.costPerTicket.toFixed(6)}`,
+        costCell(r),
       ],
     ],
   );
@@ -221,22 +229,42 @@ export function renderMarkdown(r: Report): string {
   );
 
   lines.push('## Cost', '');
-  table(
-    ['Invocations', 'Throttled', 'Input tokens', 'Output tokens', 'Cost / ticket'],
+  const t = r.ticketCost;
+  const rows: (string | number)[][] = [
     [
-      [
-        r.usage.invocations,
-        r.usage.throttles,
-        r.usage.inputTokens,
-        r.usage.outputTokens,
-        `$${r.costPerTicket.toFixed(6)}`,
-      ],
+      'CloudWatch (account-wide)',
+      r.usage.invocations,
+      r.usage.throttles,
+      r.usage.inputTokens,
+      r.usage.outputTokens,
+      `$${r.costPerTicket.toFixed(6)}`,
     ],
-  );
+  ];
+  if (t.withUsage > 0) {
+    rows.push([
+      `Tickets (${t.priced}/${t.withUsage} priced)`,
+      t.withUsage,
+      '-',
+      t.inputTokens,
+      t.outputTokens,
+      r.ticketCostPerTicket === undefined ? 'unknown' : `$${r.ticketCostPerTicket.toFixed(6)}`,
+    ]);
+  }
+  table(['Source', 'Calls', 'Throttled', 'Input tokens', 'Output tokens', 'Cost / ticket'], rows);
   lines.push(
-    `Prices: $${m.pricePerMillion.input}/M input, $${m.pricePerMillion.output}/M output (approximate). Model only.`,
+    `CloudWatch cost uses $${m.pricePerMillion.input}/M input and $${m.pricePerMillion.output}/M output; ` +
+      'ticket cost uses the price each ticket recorded. Model only.',
     '',
   );
+  if (t.withUsage > 0) {
+    const match = t.inputTokens === r.usage.inputTokens && t.outputTokens === r.usage.outputTokens;
+    lines.push(
+      match
+        ? 'The tickets account for every token CloudWatch counted.'
+        : "CloudWatch counted tokens the tickets don't: failed answers, calls retried before a save, or other use of the model.",
+      '',
+    );
+  }
   return lines.join('\n');
 }
 
@@ -282,4 +310,12 @@ export async function writeReport(r: Report): Promise<string[]> {
     written.push(`${base}-review.md`);
   }
   return written;
+}
+
+// The summary's cost: from the tickets when they record it (Step 2 on), else from CloudWatch.
+function costCell(r: Report): string {
+  if (r.ticketCost.withUsage === 0) return `$${r.costPerTicket.toFixed(6)}`;
+  return r.ticketCostPerTicket === undefined
+    ? `unknown (${r.ticketCost.priced}/${r.ticketCost.withUsage} priced)`
+    : `$${r.ticketCostPerTicket.toFixed(6)}`;
 }

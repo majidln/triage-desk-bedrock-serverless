@@ -18,7 +18,7 @@ import {
   REGION,
   TABLE_NAME,
 } from './src/config.ts';
-import { costPerTicket, waitForUsage } from './src/cost.ts';
+import { costPerTicket, ticketCost, ticketCostPerTicket, waitForUsage } from './src/cost.ts';
 import { printAccuracyBy, printLevels, printMatrix, printRedTeam, printReplyChecks } from './src/print.ts';
 import { gitInfo, latency, sha1, ticketRows, writeReport } from './src/report.ts';
 import type { Report } from './src/report.ts';
@@ -102,6 +102,8 @@ async function main() {
     },
     usage,
     costPerTicket: costPerTicket(usage, submissions.length),
+    ticketCost: ticketCost(collected),
+    ticketCostPerTicket: ticketCostPerTicket(ticketCost(collected)),
     tickets: ticketRows(collected, checks),
   };
 
@@ -126,6 +128,15 @@ async function main() {
     `Cost: ${usage.invocations} invocations for ${submissions.length} tickets, ${usage.throttles} throttled; ` +
       `${usage.inputTokens} in / ${usage.outputTokens} out tokens; $${report.costPerTicket.toFixed(6)} per ticket`,
   );
+  const t = report.ticketCost;
+  if (t.withUsage > 0) {
+    const perTicket =
+      report.ticketCostPerTicket === undefined ? 'unknown' : `$${report.ticketCostPerTicket.toFixed(6)}`;
+    console.log(
+      `Cost from tickets: ${t.withUsage} with usage, ${t.priced} priced; ` +
+        `${t.inputTokens} in / ${t.outputTokens} out tokens; ${perTicket} per ticket`,
+    );
+  }
 
   if (git.dirty) console.log("Note: uncommitted changes; the report's commit doesn't fully describe this run.");
   const files = await writeReport(report);
