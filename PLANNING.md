@@ -196,7 +196,7 @@ Partial batch responses (`ReportBatchItemFailures`), retryable vs. permanent Bed
 ### Step 2: The model answers in prose, and we parse it with a regex
 The reply format is a request in the prompt, not a contract. The urgency value isn't validated, and swapping models means rewriting the request body.
 
-Move from `InvokeModel` to the **Converse API**. Define the output as a tool with a JSON schema and force the model to call it. Validate the result. Log token usage per ticket.
+Move from `InvokeModel` to the **Converse API**. Define the output as a tool with a JSON schema and force the model to call it. Validate the result. Log token usage per ticket. See [STEP-2-GUIDE.md](docs/STEP-2-GUIDE.md).
 
 **Exit:**
 - [ ] No regex in the processor; output validated against the schema.
