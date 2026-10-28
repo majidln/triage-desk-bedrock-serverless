@@ -55,12 +55,22 @@ export function buildToolConfig(): ToolConfiguration {
       {
         toolSpec: {
           name: 'record_triage',
+          description:
+            'Record the triage of one customer support ticket: how urgent it is, and the reply to send the customer.',
           inputSchema: {
             json: {
               type: 'object',
               properties: {
-                urgency: { type: 'string', enum: Object.values(Urgency) },
-                response: { type: 'string' },
+                urgency: {
+                  type: 'string',
+                  enum: Object.values(Urgency),
+                  description: 'How urgent the ticket is.',
+                },
+                response: {
+                  type: 'string',
+                  description:
+                    'The full reply to send the customer: a complete, professional answer to their ticket, not a title or a summary.',
+                },
               },
               required: ['urgency', 'response'],
             },
@@ -79,11 +89,7 @@ export function buildPrompt(content: string): string {
 
 Ticket: ${content}
 
-Respond in JSON format:
-{
-    "urgency": "The ticket urgency level",
-    "response": "Your response to the ticket"
-}`;
+Record your answer with the record_triage tool.`;
 }
 
 // The input of the record_triage call. The schema asks for this shape but doesn't guarantee it,
