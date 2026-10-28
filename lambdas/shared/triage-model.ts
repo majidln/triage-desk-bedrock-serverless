@@ -1,7 +1,7 @@
 // Everything that talks to the model: the prompt, the Bedrock call, and reading the answer.
 // It knows nothing about SQS, DynamoDB or logging, so Step 2's switch to the Converse API
 // changes only this file.
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { PermanentError } from './classify-error';
 import { TicketTriage, Urgency } from './types';
 
@@ -18,26 +18,35 @@ const bedrockClient = new BedrockRuntimeClient({
 // Asks the model to triage one ticket. Bedrock errors are thrown as they are, and an
 // answer we can't use is thrown as a PermanentError; the caller decides what to retry.
 export async function invokeTriageModel(content: string, modelId: string): Promise<TicketTriage> {
-    const response = await bedrockClient.send(
-        new InvokeModelCommand({
-            modelId,
-            contentType: 'application/json',
-            accept: 'application/json',
-            body: JSON.stringify({
-                messages: [{ role: 'user', content: [{ text: buildPrompt(content) }] }],
-                inferenceConfig: {
-                    max_new_tokens: 512,
-                    temperature: 0.1,
-                    top_p: 0.9,
-                },
-            }),
-        }),
-    );
-    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+    const inferenceConfig = {
+        maxTokens: 512,
+        temperature: 0.1,
+        topP: 0.9,
+    };
 
-    // Nova returns content in this structure
-    const resultText = responseBody.output.message.content[0].text.trim();
-    return parseModelAnswer(resultText);
+    const command = new ConverseCommand({
+        modelId,
+        inferenceConfig,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    {
+                        text: buildPrompt(content),
+                    },
+                ],
+            },
+        ],
+    });
+
+    const response = await bedrockClient.send(command);
+
+    const text = response.output?.message?.content?.[0]?.text;
+    if (text === undefined) {
+        throw new PermanentError(`Model returned no text (stopReason: ${response.stopReason})`);
+    }
+
+    return parseModelAnswer(text);
 }
 
 export function buildPrompt(content: string): string {
