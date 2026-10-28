@@ -1,15 +1,15 @@
 // Loading the evaluation set: one JSON ticket per line, ids must be unique.
 
-import { readFile } from "node:fs/promises";
-import type { Ticket } from "./types.ts";
+import { readFile } from 'node:fs/promises';
+import type { Ticket } from './types.ts';
 
 export async function loadTickets(path: string): Promise<Ticket[]> {
-    const content = await readFile(path, { encoding: "utf8" });
+    const content = await readFile(path, { encoding: 'utf8' });
     const tickets: Ticket[] = [];
     const seen = new Set<string>();
 
-    content.split("\n").forEach((line, i) => {
-        if (line.trim() === "") return;
+    content.split('\n').forEach((line, i) => {
+        if (line.trim() === '') return;
 
         let ticket: Ticket;
         try {

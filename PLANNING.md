@@ -13,7 +13,7 @@ Out of scope: email or chat intake, languages other than English, CRM integratio
 | Step | What | Status | Tag | Cost at rest |
 |---|---|---|---|---|
 | v0 | The naive LLM call | Done | `v0-naive-llm-call` | Free |
-| 0 | Baseline and evaluation set | Not started | | Free |
+| 0 | Baseline and evaluation set | Done | `step-0-complete` | Free |
 | 1 | Reliability | Not started | | Free |
 | 2 | Structured output with the Converse API | Not started | | Free |
 | 3 | Guardrails and security | Not started | | Free (Guardrails bill per request) |
@@ -114,9 +114,9 @@ Every step moves at least one of these. The steps refer to them by ID.
 
 - [ ] AWS account, a non-root IAM identity, a budget alarm.
 - [x] AWS CLI and **SAM CLI** installed.
-- [ ] **Node.js 22+**. The functions run on `nodejs24.x`.
+- [x] **Node.js 22+**. The functions run on `nodejs24.x`. *(Node 22 locally)*
 - [ ] Docker for `sam local`.
-- [ ] **Bedrock model access** in `us-east-1` for Nova Lite, and later Nova Pro and Claude Haiku (Step 5).
+- [ ] **Bedrock model access** in `us-east-1` for Nova Lite, and later Nova Pro and Claude Haiku (Step 5). *(Nova Lite works; the others are for Step 5)*
 - [ ] An email address subscribed to both SNS topics.
 
 ---
@@ -133,6 +133,14 @@ Every step moves at least one of these. The steps refer to them by ID.
 | **Async** | SQS between intake and the model, so a slow or throttled model never slows down the API |
 | **Evaluation** | One fixed set of labeled tickets that every step re-runs unchanged. It's changed only to fix a wrong label, and that change is recorded |
 | **Safe by default** | Until Step 6 settles it, the AI reply is a *draft*. CRITICAL tickets always go to a person |
+| **Ticket intake** (Step 1) | The receiver only writes the ticket. A DynamoDB stream and an EventBridge Pipe (filtered to `INSERT`) put it on the queue, so there's no dual write that can leave a ticket stuck in `RECEIVED` (G4). Costs about a second of latency and one more DLQ to watch |
+| **Model call limits** (Step 1) | 15 s per attempt, 2 attempts. Nova Lite answers in ~1–3 s; without a limit, one hanging call uses up the whole Lambda timeout. Worst case per ticket: ~35 s |
+| **Batch size** (Step 1) | 5. Records run one after another, so the last ticket in a batch waits ~12 s (10 would be ~27 s, against the p95 < 30 s target). 1 would mean one invocation per ticket, and more parallel Bedrock calls |
+| **Processor timeout** (Step 1) | 60 s: a batch of 5 takes ~15 s. The handler stops starting tickets with less than 35 s left and hands them back, so it always returns before Lambda stops it (a timed-out invocation retries the whole batch) |
+| **Visibility timeout** (Step 1) | 360 s, 6 × the processor timeout, as AWS recommends, so SQS doesn't lend a message to a second invocation while the first may still be working on it |
+| **Processor concurrency** (Step 1) | `MaximumConcurrency: 5` on the queue trigger. Nova Lite allows 100 requests a minute; one processor at ~3 s a ticket makes ~20, so 5 fill the quota and extra tickets wait in the queue. The 3 s is an estimate from Step 0 (submit → draft p50 2.4 s); check it against `TicketProcessed` `durationMs` after deploying |
+| **Reserved concurrency** (Step 1) | None. Capping the processor with it makes Lambda throttle batches the poller has already taken, which hides them for the visibility timeout and uses up receives toward the DLQ. The account limit is 1000, so the receiver doesn't need slots kept for it |
+| **maxReceiveCount** (Step 1) | 5: ~30 min of retries (5 × 6 min) rides out a short Bedrock outage, and absorbs handed-back tickets, before the DLQ |
 
 ---
 
@@ -160,25 +168,28 @@ The evaluation set is a fixed exam: `content` is the only field sent to the pipe
 Read the results with their size in mind: with 8 CRITICAL tickets, one miss moves CRITICAL recall by 12.5 points.
 
 **Exit:**
-- [ ] Rubric and facts sheet written; evaluation set committed, with every urgency level and at least 6 red-team tickets.
-- [ ] Evaluation script runs end to end against the deployed stack.
-- [ ] v0 row recorded in [RESULTS.md](RESULTS.md): accuracy, CRITICAL recall, latency, cost per ticket, fallback count and run-to-run variance.
-- [ ] `events/fetch-ticket.json` and `events/sqs-event.json` exist and work with `sam local invoke`.
+- [x] Rubric and facts sheet written; evaluation set committed, with every urgency level and at least 6 red-team tickets. *(42 tickets, 7 red-team)*
+- [x] Evaluation script runs end to end against the deployed stack. *(two clean runs, 42/42 processed)*
+- [x] v0 row recorded in [RESULTS.md](RESULTS.md): accuracy, CRITICAL recall, latency, cost per ticket, fallback count and run-to-run variance. *(variance: 1 of 42 urgencies)*
+- [ ] `events/fetch-ticket.json` and `events/sqs-event.json` exist and work with `sam local invoke`. *(the events exist, and the receiver unit test runs `new-ticket.json`; `sam local invoke` not run, since Docker wasn't running)*
 
 *Free. Bedrock is billed per token, and one run costs cents.*
 
 ### Step 1: It said PROCESSED, but Bedrock failed
 A throttled model call returns a polite canned reply, the ticket is marked `PROCESSED`, and nobody knows. One bad record retries the whole batch and sends duplicate emails.
 
-Partial batch responses (`ReportBatchItemFailures`), rethrow retryable Bedrock errors, a fallback reply marked as such, the visibility timeout at ≥ 6× the function timeout, an idempotent update, 404/400 handling, ticket `status` in the fetch response, alarms on the DLQ and on function errors.
+Partial batch responses (`ReportBatchItemFailures`), retryable vs. permanent Bedrock errors, a `FAILED` status, a fallback reply marked as such, the visibility timeout at ≥ 6× the function timeout, an idempotent update, 404/400 handling, ticket `status` in the fetch response, alarms on the DLQ, throttling and function errors, and processor concurrency capped on purpose. The Step 0 throttling finding (lost tickets, 30-second redeliveries) belongs here. See [STEP-1-GUIDE.md](docs/STEP-1-GUIDE.md).
 
 **The point: a failure must be visible and retryable, never disguised as success.**
 
+**Don't deploy before the v0 baseline is recorded:** once Step 1 is deployed, the stack isn't v0 any more.
+
 **Exit:**
-- [ ] Force a Bedrock failure (wrong model ID) and watch the message retry and land in the DLQ, with the alarm firing.
-- [ ] One poisoned record in a batch of 10: the other 9 are processed exactly once.
-- [ ] `GET` for an unknown ticket returns `404`; malformed JSON returns `400`.
-- [ ] Evaluation re-run, `step-1` row in [RESULTS.md](RESULTS.md).
+- [x] Force a Bedrock failure (wrong model ID) and watch the ticket become `FAILED` without retries; transient failures retry and land in the DLQ, with the alarm firing. *(permanent: `FAILED` in 4 s, no retries. Transient: an SNS deny gave 5 retries 6 min apart, then the DLQ and the `RequestDLQ` alarm; a redrive sent the missing email)*
+- [x] Receiver throttling or API `5xx` raises an alarm. *(receiver reserved concurrency 0 → `503` → `Api5xx` alarm)*
+- [x] One poisoned record in a batch of 10: the other 9 are processed exactly once. *(live: dropped once, 9 × `TicketProcessed`, alarm fired; the shared batch is proven by the unit test)*
+- [x] `GET` for an unknown ticket returns `404`; malformed JSON returns `400`.
+- [x] Evaluation re-run, `step-1` row in [RESULTS.md](RESULTS.md). *(42/42 processed, 0 retried, p95 19.8 s)*
 
 *Free.*
 

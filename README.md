@@ -12,26 +12,30 @@ This pipeline receives customer support requests via API Gateway, stores them in
 
 1. **Support Request Receiver** (`support-request-receiver.ts`)
    - Receives POST requests at `/support-request`
-   - Creates ticket records in DynamoDB
-   - Queues tickets for processing via SQS
+   - Creates the ticket in DynamoDB: its only write
 
-2. **Fetch Support Ticket** (`fetch-support-ticket.ts`)
+2. **Ticket intake** (an EventBridge Pipe, no code)
+   - Reads new tickets (`INSERT`s) from the table's DynamoDB stream and puts each one on the SQS queue
+   - One write in the receiver means a ticket can't be stored without also being queued
+
+3. **Fetch Support Ticket** (`fetch-support-ticket.ts`)
    - Receives GET requests at `/support-request?ticketId=<id>`
    - Retrieves ticket information from DynamoDB
-   - Returns the AI-generated response for the ticket
+   - Returns the ticket's status, and the AI-generated reply once it's processed
 
-3. **Support Request Processor** (`support-request-processor.ts`)
-   - Processes tickets from SQS queue
-   - Uses AWS Bedrock (Amazon Nova Lite) to analyze ticket urgency and generate responses
-   - Updates tickets in DynamoDB with analytics
+4. **Support Request Processor** (`support-request-processor.ts`)
+   - Processes tickets from the SQS queue (each message is one DynamoDB stream record)
+   - Uses AWS Bedrock (Amazon Nova Lite) to decide the urgency and draft a reply
+   - Retries transient failures, and marks a ticket `FAILED` on permanent ones
+   - Updates the ticket in DynamoDB (once, even if SQS delivers it twice)
    - Sends notifications to support team via SNS
-   - Logs errors to a dedicated CloudWatch log group for monitoring
 
 ### AWS Resources
 
 - **API Gateway**: HTTP API with endpoints for creating and fetching support tickets
 - **Lambda Functions**: Three functions for receiving, fetching, and processing tickets
-- **DynamoDB**: Ticket storage with server-side encryption
+- **DynamoDB**: Ticket storage with server-side encryption, and a stream of changes
+- **EventBridge Pipes**: Moves new tickets from the stream to the queue, with its own dead-letter queue
 - **SQS**: Queue with dead-letter queue for reliable processing
 - **SNS**: Topics for ticket notifications and error alerts
 - **CloudWatch**: Log groups, metric filters, and alarms for monitoring and alerting
@@ -54,11 +58,13 @@ sam deploy --guided
 
 The API Gateway endpoint URL will be displayed in the deployment output.
 
-**Important:** After deployment, subscribe to the SNS topics for notifications:
-- **Support Ticket Notifications**: Subscribe to receive notifications when tickets are processed
-- **Bedrock Error Alerts**: Subscribe to receive alerts when Bedrock processing errors occur
+To receive the pipeline's alarms by email, pass an address when deploying, then click the confirmation link AWS sends:
 
-Use the SNS Topic ARNs from the deployment outputs to subscribe via AWS Console, CLI, or SDK.
+```bash
+sam deploy --parameter-overrides AlertEmail=you@example.com
+```
+
+The support team subscribes to the ticket notifications topic (output `SupportTicketNotificationTopicArn`) in the console or with the CLI.
 
 ## Local Development
 
@@ -82,6 +88,14 @@ sam local invoke FetchSupportRequestFunction --event events/fetch-ticket.json
 sam local invoke SupportRequestProcessorFunction --event events/sqs-event.json
 ```
 
+Formatting and linting cover `lambdas/` and `eval/` from one config at the repo root (Prettier for layout, ESLint with typescript-eslint for code issues):
+
+```bash
+npm install          # once, at the repo root
+npm run format       # rewrite files into the shared style
+npm run check        # what CI would run: format check + lint
+```
+
 ## Project Structure
 
 ```
@@ -93,7 +107,10 @@ sam local invoke SupportRequestProcessorFunction --event events/sqs-event.json
 │   │   └── support-request-processor.ts # SQS handler
 │   └── shared/
 │       ├── types.ts                     # TypeScript types
-│       └── errors-handler.ts            # Error logging utilities
+│       ├── triage-model.ts              # Prompt, Bedrock call, reading the model's answer
+│       ├── classify-error.ts            # Retry (transient) or fail (permanent)?
+│       ├── logger.ts                    # Structured JSON logger (Powertools)
+│       └── env.ts                       # Required environment variables
 ├── events/
 │   └── new-ticket.json                  # Test event
 ├── eval/                                # Evaluation: measures the deployed pipeline
@@ -147,70 +164,63 @@ Commit before a real run: the report records the commit, and warns when there ar
 }
 ```
 
-**Response:**
-```json
-{
-  "message": "new ticket has been created for this request",
-  "ticketId": "uuid-here"
-}
-```
+**Responses:**
+
+| Status | When | Body |
+|---|---|---|
+| `202` | The ticket is stored and queued | `{ "message": "new ticket has been created for this request", "ticketId": "<uuid>" }` |
+| `400` | The body isn't a JSON object with a non-empty `content` string | `{ "message": "<reason>" }` |
+| `500` | Something failed on our side | `{ "message": "some error happened" }` |
 
 ### Fetch Support Ticket
 
 **Endpoint:** `GET /support-request?ticketId=<ticket-id>`
 
-**Response:**
-```json
-{
-  "response": "Thank you for contacting support. We have received your request and will get back to you soon."
-}
-```
+**Responses:**
 
-**Note:** The response field will be `undefined` if the ticket hasn't been processed yet by the AI processor.
+| Status | When | Body |
+|---|---|---|
+| `200` | The ticket exists | `{ "ticketId": "<uuid>", "status": "RECEIVED" \| "PROCESSED" \| "FAILED", "response"?: "<reply>" }` |
+| `400` | `ticketId` is missing or isn't a UUID | `{ "message": "<reason>" }` |
+| `404` | No ticket with that id | `{ "message": "ticket not found" }` |
+
+`response` is present only when `status` is `PROCESSED`. Keep polling while it's `RECEIVED`; `FAILED` means the ticket couldn't be answered automatically.
 
 ## Monitoring and Observability
 
 ### CloudWatch Logs
 
-The application uses CloudWatch Logs for centralized logging:
+The processor writes structured JSON logs with [Powertools for AWS Lambda](https://docs.powertools.aws.dev/lambda/typescript/latest/core/logger/) to its own log group, `/{StackName}/processor` (30-day retention). Logs hold ids, sizes and outcomes, never ticket content or model replies.
 
-- **Lambda Function Logs**: Each Lambda function automatically logs to CloudWatch Logs
-  - Log format: JSON (configured in `template.yaml`)
-  - Log retention: Default (never expire) for Lambda logs
+| `message` | Level | Meaning |
+|---|---|---|
+| `TicketProcessed` | INFO | Triaged, saved and the support team notified (`urgency`, `durationMs`) |
+| `RecordRetried` | WARN | A transient error; SQS retries the message, then sends it to the DLQ |
+| `TicketFailed` | ERROR | A permanent error; the ticket is marked `FAILED` with the reason |
+| `PoisonedMessage` | ERROR | A message that isn't a readable ticket; dropped |
+| `TicketNotFound` | ERROR | A message for a ticket that isn't in the table; dropped |
+| `DuplicateMessage` | INFO | SQS delivered a ticket that was already handled; nothing done again |
 
-- **Bedrock Error Log Group**: Dedicated log group for Bedrock processing errors
-  - Log Group Name: `{StackName}-BedrockTicketProcessorErrorLogGroup`
-  - Retention: 30 days
-  - Contains structured error logs with:
-    - Error details (name, message, stack trace)
-    - Ticket ID and context
-    - Bedrock model ID and request metadata
-    - Timestamp and environment information
-
-
-### CloudWatch Metrics
-
-The application includes custom CloudWatch metrics:
-
-- **BedrockTicketProcessorErrors**: Tracks errors from the Bedrock ticket processor
-  - Namespace: `SupportPipeline`
-  - Metric Name: `BedrockTicketProcessorErrors`
-  - Filter Pattern: `{ $.level = "ERROR" && $.service = "BedrockTicketProcessor" }`
-  - Increments by 1 for each error logged
-
-**Viewing Metrics:**
-- AWS Console: CloudWatch → Metrics → Custom Namespaces → SupportPipeline
-- AWS CLI: `aws cloudwatch get-metric-statistics --namespace SupportPipeline --metric-name BedrockTicketProcessorErrors`
+One line per message, for how it ended: nothing else is logged. The level is set by `POWERTOOLS_LOG_LEVEL` in `template.yaml`.
 
 ### CloudWatch Alarms
 
-**Bedrock Ticket Processor Error Alarm:**
-- **Alarm Name**: `{StackName}-BedrockTicketProcessorErrors`
-- **Metric**: `BedrockTicketProcessorErrors` (Sum)
-- **Threshold**: > 5 errors in 5 minutes
-- **Action**: Sends notification to `BedrockTicketProcessorErrorAlertTopic` SNS topic
-- **Missing Data**: Treated as not breaching (no alarm when no data)
+Each alarm watches a symptom a customer or the support team would notice. It emails the alert topic (output `AlertTopicArn`) when it fires and again when it's back to OK. No data, as at night with no traffic, counts as OK.
 
+| Alarm | Fires when | Means |
+|---|---|---|
+| `{StackName}-Api5xx` | ≥ 1 API `5xx` in 5 min | A customer couldn't submit or fetch a ticket (a throttled receiver shows up here as a `503`) |
+| `{StackName}-ProcessorErrors` | ≥ 1 processor `ERROR` line in 5 min | A ticket was marked `FAILED`, or a message was dropped: someone has to look. Counted by a metric filter, `TriageDesk / ProcessorErrors` |
+| `{StackName}-ProcessorCrashes` | ≥ 1 Lambda `Errors` in 5 min | The processor crashed or timed out (not a single ticket's failure) |
+| `{StackName}-RequestDLQ` | ≥ 1 message in the request DLQ | A ticket failed every retry. Fix the cause, then redrive it |
+| `{StackName}-IntakeDLQ` | ≥ 1 message in the intake DLQ | The intake pipe couldn't queue new tickets; they're stuck as `RECEIVED` |
+| `{StackName}-QueueBacklog` | Oldest queued ticket > 20 min | Tickets are waiting and nothing is processing them |
+
+To check the email path without breaking anything (this doesn't test the metric):
+
+```bash
+aws cloudwatch set-alarm-state --alarm-name triage-desk-ProcessorErrors --state-value ALARM --state-reason "Testing the alert email"
+```
 
 ## Cleanup
 
@@ -234,8 +244,6 @@ sam delete --stack-name triage-desk
 
 **Advanced Error Handling & Retry Logic**
 - Implement retry logic with exponential backoff for transient failures (Bedrock API, DynamoDB throttling)
-- Add partial batch failure handling for SQS processing using `reportBatchItemFailures`
-- Create custom error classes for better error categorization and handling
 
 **Additional Monitoring & Observability**
 - Add custom CloudWatch metrics for ticket processing success rates and latency

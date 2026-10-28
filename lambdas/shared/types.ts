@@ -17,9 +17,16 @@ export enum Urgency {
     CRITICAL = 'CRITICAL',
 }
 
-export interface TicketAnalytics {
+// The model's triage of a ticket. Stored in DynamoDB under the `analytics` attribute.
+export interface TicketTriage {
     urgency: Urgency;
     response: string;
+}
+
+export interface TicketFailure {
+    errorName: string;
+    message: string;
+    failedAt: string;
 }
 
 export interface SupportTicket {
@@ -32,6 +39,8 @@ export interface SupportTicket {
     urgency?: Urgency;
     response?: string;
     analyticsGeneratedAt?: string;
+    failure?: TicketFailure;
+    notifiedAt?: string;
 }
 
 export interface CreateTicketRequest {
@@ -44,6 +53,9 @@ export interface CreateTicketResponse {
     ticketId: string;
 }
 
+// What GET /support-request returns. `response` is set only once the ticket is PROCESSED.
 export interface FetchTicketResponse {
+    ticketId: string;
+    status: TicketStatus;
     response?: string;
 }

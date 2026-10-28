@@ -1,7 +1,7 @@
 // Part 3a: urgency. Accuracy, the confusion matrix, recall and precision per level.
 
-import type { Collected, Urgency } from "../types.ts";
-import { ratio } from "../util.ts";
+import type { Collected, Urgency } from '../types.ts';
+import { ratio } from '../util.ts';
 
 export interface Accuracy {
     correct: number; // processed tickets with the right urgency
@@ -12,7 +12,7 @@ export interface Accuracy {
 }
 
 export function scoreAccuracy(collected: Collected[]): Accuracy {
-    const processed = collected.filter((c) => c.outcome === "processed");
+    const processed = collected.filter((c) => c.outcome === 'processed');
     // Only processed tickets can be correct: a fallback's MEDIUM is luck, not judgment.
     const correct = processed.filter((c) => c.urgency === c.submission.ticket.expected_urgency);
     return {
@@ -24,10 +24,10 @@ export function scoreAccuracy(collected: Collected[]): Accuracy {
     };
 }
 
-export const LEVELS: Urgency[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+export const LEVELS: Urgency[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 // OTHER: the model answered with something that isn't a level (v0 doesn't validate, gap G6).
 // NONE: the model never answered (fallback, timeout, not submitted).
-export const COLUMNS = ["LOW", "MEDIUM", "HIGH", "CRITICAL", "OTHER", "NONE"] as const;
+export const COLUMNS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'OTHER', 'NONE'] as const;
 export type Column = (typeof COLUMNS)[number];
 
 // matrix[expected][column] = number of tickets
@@ -43,9 +43,9 @@ export function confusionMatrix(collected: Collected[]): Matrix {
     for (const c of collected) {
         const row = c.submission.ticket.expected_urgency;
         let column: Column;
-        if (c.outcome !== "processed") column = "NONE";
+        if (c.outcome !== 'processed') column = 'NONE';
         else if (LEVELS.includes(c.urgency as Urgency)) column = c.urgency as Column;
-        else column = "OTHER";
+        else column = 'OTHER';
         matrix[row][column]++;
     }
     return matrix;
