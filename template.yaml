@@ -20,13 +20,21 @@ Parameters:
 Conditions:
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
+# Settings every function shares. A function's own Environment variables are added to these.
+# Metadata (the esbuild settings) can't go here: SAM doesn't support it in Globals.
 Globals:
   Function:
     Runtime: nodejs24.x
+    Architectures:
+      - x86_64
     Timeout: 30
     CodeUri: lambdas/
     LoggingConfig:
       LogFormat: JSON
+    Environment:
+      Variables:
+        SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
+        POWERTOOLS_LOG_LEVEL: INFO
 
 Resources:
   HttpApi:
@@ -49,8 +57,6 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ReceiverFunction'
       Handler: handlers/support-request-receiver.handler
-      Architectures:
-      - x86_64
       Events:
         ReceiveSupportRequest:
           Type: HttpApi
@@ -63,9 +69,7 @@ Resources:
             TableName: !Ref SupportTicketTable
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           POWERTOOLS_SERVICE_NAME: triage-receiver
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -81,8 +85,6 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-FetchFunction'
       Handler: handlers/fetch-support-ticket.handler
-      Architectures:
-      - x86_64
       Events:
         FetchSupportRequest:
           Type: HttpApi
@@ -95,9 +97,7 @@ Resources:
             TableName: !Ref SupportTicketTable
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           POWERTOOLS_SERVICE_NAME: triage-fetch
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -113,8 +113,6 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ListFunction'
       Handler: handlers/list-support-tickets.handler
-      Architectures:
-      - x86_64
       Events:
         ListSupportTickets:
           Type: HttpApi
@@ -131,10 +129,8 @@ Resources:
               Resource: !Sub '${SupportTicketTable.Arn}/index/TicketsByUser'
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           TICKETS_BY_USER_INDEX: TicketsByUser
           POWERTOOLS_SERVICE_NAME: triage-list
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -152,8 +148,6 @@ Resources:
       Handler: handlers/support-request-processor.handler
       # A batch of 5 takes ~15 s; 60 s leaves room for slow model calls (see PLANNING.md §3)
       Timeout: 60
-      Architectures:
-      - x86_64
       Events:
         ProcessQueue:
           Type: SQS
@@ -181,11 +175,9 @@ Resources:
         LogGroup: !Ref ProcessorLogGroup
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           BEDROCK_MODEL_ID: !Ref ModelId
           SNS_TOPIC_ARN: !GetAtt SupportTicketNotificationTopic.TopicArn
           POWERTOOLS_SERVICE_NAME: triage-processor
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
