@@ -209,7 +209,7 @@ Move from `InvokeModel` to the **Converse API**. Define the output as a tool wit
 ### Step 3: Anyone can make us pay, and anyone can talk to our prompt
 The API is open, unthrottled and unbounded, and each request costs a model call. Ticket text sits inside the instructions, and customer PII flows into logs and emails.
 
-System prompt with the ticket clearly separated as data. A **Bedrock Guardrail** for PII redaction, denied topics and prompt-attack filtering. API auth, throttling and a maximum size. Least-privilege IAM. Stop logging ticket contents.
+System prompt with the ticket clearly separated as data. A **Bedrock Guardrail** for PII redaction, denied topics and prompt-attack filtering. API auth, throttling and a maximum size. Least-privilege IAM. Stop logging ticket contents. See [STEP-3-GUIDE.md](docs/STEP-3-GUIDE.md).
 
 **Exit:**
 - [ ] Every red-team ticket in the evaluation set behaves correctly.
@@ -274,7 +274,7 @@ Deploy → verify the exit criteria by hand → run the evaluation and record nu
 | Question | Recommendation | Decision |
 |---|---|---|
 | Vector store for the Knowledge Base (Step 4) | S3 Vectors or Aurora Serverless pgvector, not OpenSearch Serverless, which has a high hourly minimum | Open |
-| Auth for the public API (Step 3) | Cognito JWT authorizer if a frontend comes later; API key + usage plan otherwise | Open |
+| Auth for the public API (Step 3) | A JWT authorizer on the HTTP API, with Cognito or Auth0 as the issuer. API keys and usage plans need a REST API | Open |
 | Judge model for reply quality (Step 5) | A stronger model than the one being judged, checked against hand labels | Open |
 | Auto-send vs. human-approved replies (Step 6) | Human approval for CRITICAL and policy topics | Open |
 | Blog format | One post per step | Open |
