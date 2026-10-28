@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
-import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { APIGatewayProxyEventV2WithJWTAuthorizer, Context } from 'aws-lambda';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
@@ -13,13 +13,16 @@ const ddbMock = mockClient(DynamoDBDocumentClient);
 
 const lambdaContext = { functionName: 'triage-desk-ReceiverFunction', awsRequestId: 'test-request-id' } as Context;
 
+// The caller (the token's `sub`) in events/new-ticket.json
+const USER_ID = 'auth0|test-user';
+
 // The example event used with `sam local invoke` (an HTTP API v2 event).
-function exampleEvent(): APIGatewayProxyEventV2 {
+function exampleEvent(): APIGatewayProxyEventV2WithJWTAuthorizer {
   const path = join(__dirname, '../../../events/new-ticket.json');
-  return JSON.parse(readFileSync(path, 'utf8')) as APIGatewayProxyEventV2;
+  return JSON.parse(readFileSync(path, 'utf8')) as APIGatewayProxyEventV2WithJWTAuthorizer;
 }
 
-function withBody(body: string | undefined): APIGatewayProxyEventV2 {
+function withBody(body: string | undefined): APIGatewayProxyEventV2WithJWTAuthorizer {
   return { ...exampleEvent(), body };
 }
 
@@ -58,10 +61,21 @@ describe('support-request-receiver', () => {
       id: ticketId,
       status: 'RECEIVED',
       content: 'How do I invite a teammate to my board?',
+      userId: USER_ID,
     });
     expect(put.Item?.createdAt).toBe(put.Item?.updatedAt);
     // The table's stream and the intake pipe queue it: the receiver makes no other call
     expect(ddbMock.calls()).toHaveLength(1);
+  });
+
+  it('stores the caller from the token as the userId, not one sent in the body', async () => {
+    const body = JSON.stringify({ content: 'Hello', customerId: 'someone-else', userId: 'someone-else' });
+
+    await handler(withBody(body), lambdaContext);
+
+    const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+    expect(put.Item?.userId).toBe(USER_ID);
+    expect(put.Item).not.toHaveProperty('customerId');
   });
 
   it('returns 500 when DynamoDB fails', async () => {
