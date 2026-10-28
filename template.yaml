@@ -5,6 +5,9 @@ Parameters:
   StageName:
     Type: String
     Default: Dev
+  ModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
   AlertEmail:
     Type: String
     Default: ''
@@ -123,13 +126,13 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - 'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0'
+                - !Sub 'arn:aws:bedrock:*::foundation-model/${ModelId}'
       LoggingConfig:
         LogGroup: !Ref ProcessorLogGroup
       Environment:
         Variables:
           SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
-          BEDROCK_MODEL_ID: amazon.nova-lite-v1:0
+          BEDROCK_MODEL_ID: !Ref ModelId
           SNS_TOPIC_ARN: !GetAtt SupportTicketNotificationTopic.TopicArn
           POWERTOOLS_SERVICE_NAME: triage-processor
           POWERTOOLS_LOG_LEVEL: INFO
