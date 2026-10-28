@@ -40,13 +40,14 @@ function ticketMessage(ticketId: string, content: string): string {
     return JSON.stringify(record);
 }
 
-// A Converse response whose answer is this text.
-function converseText(text: string) {
-    return converseContent([{ text }]);
+// A Converse response where the model filled in record_triage with this input.
+function converseTool(input: unknown) {
+    return converseContent([{ toolUse: { toolUseId: 'tooluse-1', name: 'record_triage', input } }], 'tool_use');
 }
 
-function converseResponse(answer: object) {
-    return converseText(JSON.stringify(answer));
+// A Converse response where the model wrote text instead of calling the tool.
+function converseText(text: string) {
+    return converseContent([{ text }]);
 }
 
 function converseContent(content: object[], stopReason = 'end_turn') {
@@ -97,7 +98,7 @@ describe('support-request-processor', () => {
         ddbMock.reset();
         bedrockMock.reset();
         snsMock.reset();
-        bedrockMock.on(ConverseCommand).resolves(converseResponse({ urgency: 'HIGH', response: 'Here is how.' }));
+        bedrockMock.on(ConverseCommand).resolves(converseTool({ urgency: 'HIGH', response: 'Here is how.' }));
     });
 
     it('reports only the failed record in a batch of 3, and finishes the others once', async () => {
@@ -154,25 +155,12 @@ describe('support-request-processor', () => {
     });
 
     it.each([
-        ['not JSON', 'Sorry, I cannot help with that.'],
-        ['an invalid urgency', JSON.stringify({ urgency: 'URGENT', response: 'Here is how.' })],
-        ['no response', JSON.stringify({ urgency: 'LOW' })],
-    ])('marks the ticket FAILED when the model answer is %s', async (_label, text) => {
-        bedrockMock.on(ConverseCommand).resolves(converseText(text));
-        ddbMock.on(UpdateCommand).resolves({});
-
-        const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
-
-        expect(result).toEqual({ batchItemFailures: [] });
-        const values = ddbMock.commandCalls(UpdateCommand)[0].args[0].input.ExpressionAttributeValues;
-        expect(values?.[':status']).toBe('FAILED');
-        expect(values?.[':failure']).toMatchObject({ errorName: 'PermanentError' });
-    });
-
-    it.each([
-        ['no content', converseContent([])],
-        ['cut off before any text', converseContent([], 'max_tokens')],
-    ])('marks the ticket FAILED, without a retry, when the model returns %s', async (_label, response) => {
+        ['an invalid urgency', converseTool({ urgency: 'URGENT', response: 'Here is how.' }), 'invalid urgency'],
+        ['no response', converseTool({ urgency: 'LOW' }), 'no response'],
+        ['text instead of the tool', converseText('{"urgency": "LOW", "response": "Hi"}'), "didn't call record_triage"],
+        ['no content', converseContent([]), "didn't call record_triage"],
+        ['an answer cut off by max_tokens', converseContent([], 'max_tokens'), 'stopReason: max_tokens'],
+    ])('marks the ticket FAILED, without a retry, when the model returns %s', async (_label, response, reason) => {
         bedrockMock.on(ConverseCommand).resolves(response);
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -181,7 +169,10 @@ describe('support-request-processor', () => {
         expect(result).toEqual({ batchItemFailures: [] });
         const values = ddbMock.commandCalls(UpdateCommand)[0].args[0].input.ExpressionAttributeValues;
         expect(values?.[':status']).toBe('FAILED');
-        expect(values?.[':failure']).toMatchObject({ errorName: 'PermanentError' });
+        expect(values?.[':failure']).toMatchObject({
+            errorName: 'PermanentError',
+            message: expect.stringContaining(reason),
+        });
     });
 
     it('retries when marking the ticket FAILED itself fails', async () => {
@@ -235,7 +226,7 @@ describe('support-request-processor', () => {
         // Bedrock is called in batch order: ticket-1 gets an answer, ticket-3 is throttled
         bedrockMock
             .on(ConverseCommand)
-            .resolvesOnce(converseResponse({ urgency: 'HIGH', response: reply }))
+            .resolvesOnce(converseTool({ urgency: 'HIGH', response: reply }))
             .rejectsOnce(new ThrottlingException(sdkError));
         ddbMock.on(UpdateCommand).resolves({});
         const record = { ...exampleRecord(1), body: ticketMessage('ticket-1', secret) };
@@ -339,8 +330,9 @@ describe('support-request-processor', () => {
 
             const [save] = guardedUpdates();
             expect(save.Key).toEqual({ id: '11111111-2222-3333-4444-555555555555' });
-            const { messages } = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input;
+            const { messages, toolConfig } = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input;
             expect(messages?.[0].content?.[0].text).toContain('How do I invite a teammate to my board?');
+            expect(toolConfig?.toolChoice).toEqual({ tool: { name: 'record_triage' } });
         });
 
         it.each([
