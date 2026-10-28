@@ -108,6 +108,43 @@ Resources:
         Sourcemap: true
         Bundle: true
 
+  ListSupportTicketsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ListFunction'
+      Handler: handlers/list-support-tickets.handler
+      Architectures:
+      - x86_64
+      Events:
+        ListSupportTickets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /support-requests
+            Method: get
+      # Only a query on the by-user index: it can't read the table itself, or any ticket's content
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub '${SupportTicketTable.Arn}/index/TicketsByUser'
+      Environment:
+        Variables:
+          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
+          TICKETS_BY_USER_INDEX: TicketsByUser
+          POWERTOOLS_SERVICE_NAME: triage-list
+          POWERTOOLS_LOG_LEVEL: INFO
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - handlers/list-support-tickets.ts
+        Minify: true
+        Target: es2020
+        Sourcemap: true
+        Bundle: true
+
   SupportRequestProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -168,9 +205,28 @@ Resources:
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
+      # A user's tickets, newest first, for GET /support-requests. Only what that route
+      # returns is copied into the index: never the content. Tickets without a userId
+      # (from before Step 3) aren't in it.
+      GlobalSecondaryIndexes:
+        - IndexName: TicketsByUser
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - analytics
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true

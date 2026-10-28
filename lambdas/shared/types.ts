@@ -80,3 +80,10 @@ export interface TicketView {
   createdAt: string;
   response?: string;
 }
+
+// What GET /support-requests returns: the caller's tickets, newest first. Pass `nextToken`
+// back to get the next page; there is none on the last page.
+export interface ListTicketsResponse {
+  tickets: TicketView[];
+  nextToken?: string;
+}

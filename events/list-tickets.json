@@ -1,0 +1,52 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /support-requests",
+  "rawPath": "/Dev/support-requests",
+  "rawQueryString": "limit=10",
+  "headers": {
+    "Header1": "value1",
+    "Header2": "value1,value2"
+  },
+  "queryStringParameters": {
+    "limit": "10"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "api-id",
+    "authentication": {
+      "clientCert": {
+        "clientCertPem": "CERT_CONTENT",
+        "subjectDN": "www.example.com",
+        "issuerDN": "Example issuer",
+        "serialNumber": "a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1:a1",
+        "validity": {
+          "notBefore": "May 28 12:30:02 2019 GMT",
+          "notAfter": "Aug  5 09:36:04 2021 GMT"
+        }
+      }
+    },
+    "authorizer": {
+      "jwt": {
+        "claims": {
+          "sub": "auth0|test-user"
+        },
+        "scopes": ["scope1", "scope2"]
+      }
+    },
+    "domainName": "id.execute-api.us-east-1.amazonaws.com",
+    "domainPrefix": "id",
+    "http": {
+      "method": "GET",
+      "path": "/Dev/support-requests",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "192.168.0.1/32",
+      "userAgent": "agent"
+    },
+    "requestId": "id",
+    "routeKey": "GET /support-requests",
+    "stage": "Dev",
+    "time": "12/Mar/2020:19:03:58 +0000",
+    "timeEpoch": 1583348638390
+  },
+  "isBase64Encoded": false
+}
