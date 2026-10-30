@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { TicketStatus, CreateTicketRequest, CreateTicketResponse } from '../shared/types';
 import { callerId } from '../shared/caller';
 import { requireEnv } from '../shared/env';
+import { checkTicket, TicketCheck } from '../shared/guardrail';
 import { json } from '../shared/http';
 import { logger } from '../shared/logger';
 
@@ -44,6 +45,17 @@ export const handler = async (
     return json(parsed.statusCode, { message: parsed.message });
   }
 
+  // Before the first write: every copy of a ticket (table, stream, queue, email) holds only the
+  // masked text. Without a check there's no masked text, so refuse the ticket; the client can
+  // send it again. Only the error's name is logged, in case the message quotes the ticket.
+  let check: TicketCheck;
+  try {
+    check = await checkTicket(parsed.content);
+  } catch (err) {
+    logger.error('GuardrailFailed', { userId, errorName: (err as Error).name });
+    return json(503, { message: 'please try again shortly' });
+  }
+
   try {
     const ticketId = uuidv4();
     const now = new Date().toISOString();
@@ -55,7 +67,8 @@ export const handler = async (
         TableName: config.tableName,
         Item: {
           id: ticketId,
-          content: parsed.content,
+          content: check.content,
+          guardrailFlags: check.flags,
           status: TicketStatus.RECEIVED,
           createdAt: now,
           updatedAt: now,
@@ -64,7 +77,13 @@ export const handler = async (
       }),
     );
 
-    logger.info('TicketReceived', { ticketId, userId, contentLength: parsed.content.length });
+    logger.info('TicketReceived', {
+      ticketId,
+      userId,
+      contentLength: check.content.length,
+      flags: check.flags,
+      piiTypes: check.piiTypes,
+    });
     const response: CreateTicketResponse = {
       message: 'new ticket has been created for this request',
       ticketId,

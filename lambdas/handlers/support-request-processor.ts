@@ -10,6 +10,7 @@ import {
   TicketFailure,
   LlmUsage,
   TriageResult,
+  Urgency,
 } from '../shared/types';
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
@@ -77,6 +78,21 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
   return { batchItemFailures };
 };
 
+// The reply to a ticket the guardrail flagged. Sent without calling the model, so what the ticket
+// says can't reach it; a person reads the ticket instead, and answers any real question in it.
+export const FLAGGED_REPLY =
+  'Thank you for contacting Flowboard support. A support agent will review your request and get back to you.';
+
+// The triage of a flagged ticket: never the model's, so it costs nothing. LOW, because the
+// rubric labels an injection by what's left of the ticket, and it isn't an outage. This is a
+// decision, not a failure: FAILED would fire the error alarm on every injection attempt.
+function flaggedTriage(): TriageResult {
+  return {
+    triage: { urgency: Urgency.LOW, response: FLAGGED_REPLY },
+    usage: { modelId: 'none', inputTokens: 0, outputTokens: 0, costUsd: 0 },
+  };
+}
+
 // Returning an outcome means "done, delete the message"; throwing means "retry it".
 // SQS can deliver the same message more than once, so every step here is safe to repeat.
 export async function processRecord(record: SQSRecord): Promise<Outcome> {
@@ -98,7 +114,7 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
   // There's no fallback answer: a transient error is retried, a permanent one marks the ticket FAILED.
   let result: TriageResult;
   try {
-    result = await invokeTriageModel(message.content, config.modelId);
+    result = message.flags.length > 0 ? flaggedTriage() : await invokeTriageModel(message.content, config.modelId);
   } catch (err) {
     if (classifyError(err) === 'transient') {
       throw err;
@@ -123,6 +139,7 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     ticketId,
     messageId,
     urgency: triage.urgency,
+    flags: message.flags,
     modelId: usage.modelId,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -176,7 +193,8 @@ function parseMessage(body: string): SupportTicketMessage {
   if (typeof ticket.id !== 'string' || typeof ticket.content !== 'string') {
     throw new PermanentError('Stream record has no ticket id or content');
   }
-  return { ticketId: ticket.id, content: ticket.content };
+  const flags = Array.isArray(ticket.guardrailFlags) ? ticket.guardrailFlags.map(String) : [];
+  return { ticketId: ticket.id, content: ticket.content, flags };
 }
 
 // The parts of a stored ticket the duplicate check reads.
@@ -259,13 +277,18 @@ async function markFailed(ticketId: string, failure: TicketFailure): Promise<Gua
   });
 }
 
+// Tells the agent why a flagged ticket has no real draft, and that it needs a person.
+function flagNote(flags: string[]): string {
+  return flags.length > 0 ? `\n\nFlagged by the guardrail, needs review: ${flags.join(', ')}` : '';
+}
+
 // Sends the email, then records that it was sent. If the second write fails, the retry
 // sends the email again: a rare duplicate email is better than a missed one.
 async function notifyAndRecord(message: SupportTicketMessage, triage: TicketTriage): Promise<void> {
   await snsClient.send(
     new PublishCommand({
       TopicArn: config.topicArn,
-      Message: `New support ticket received: ${message.ticketId}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
+      Message: `New support ticket received: ${message.ticketId}${flagNote(message.flags)}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
       Subject: `::${triage.urgency}:: New Support Ticket`,
     }),
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { APIGatewayProxyEventV2WithJWTAuthorizer, Context } from 'aws-lambda';
+import { ApplyGuardrailCommand, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
@@ -10,6 +11,7 @@ import { handler, MAX_BODY_BYTES, MAX_CONTENT_LENGTH } from '../../handlers/supp
 jest.mock('uuid', () => ({ v4: () => 'test-ticket-id' }));
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
+const bedrockMock = mockClient(BedrockRuntimeClient);
 
 const lambdaContext = { functionName: 'triage-desk-ReceiverFunction', awsRequestId: 'test-request-id' } as Context;
 
@@ -35,6 +37,8 @@ function withClaims(claims: Record<string, string>): APIGatewayProxyEventV2WithJ
 describe('support-request-receiver', () => {
   beforeEach(() => {
     ddbMock.reset();
+    bedrockMock.reset();
+    bedrockMock.on(ApplyGuardrailCommand).resolves({ action: 'NONE', outputs: [], assessments: [] });
   });
 
   it.each([
@@ -105,6 +109,60 @@ describe('support-request-receiver', () => {
     const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
     expect(put.Item?.userId).toBe(USER_ID);
     expect(put.Item).not.toHaveProperty('customerId');
+  });
+
+  it('stores only the masked text', async () => {
+    bedrockMock.on(ApplyGuardrailCommand).resolves({
+      action: 'GUARDRAIL_INTERVENED',
+      outputs: [{ text: 'My card is {CREDIT_DEBIT_CARD_NUMBER}' }],
+      assessments: [
+        {
+          sensitiveInformationPolicy: {
+            regexes: [],
+            piiEntities: [
+              { type: 'CREDIT_DEBIT_CARD_NUMBER', match: '4111 1111 1111 1111', action: 'ANONYMIZED', detected: true },
+            ],
+          },
+        },
+      ],
+    });
+
+    await handler(withBody(JSON.stringify({ content: 'My card is 4111 1111 1111 1111' })), lambdaContext);
+
+    const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+    expect(put.Item?.content).toBe('My card is {CREDIT_DEBIT_CARD_NUMBER}');
+    expect(JSON.stringify(put.Item)).not.toContain('4111');
+  });
+
+  it('stores the flags with the ticket', async () => {
+    bedrockMock.on(ApplyGuardrailCommand).resolves({
+      action: 'NONE',
+      outputs: [],
+      assessments: [
+        { contentPolicy: { filters: [{ type: 'PROMPT_ATTACK', confidence: 'HIGH', action: 'NONE', detected: true }] } },
+      ],
+    });
+
+    const result = await handler(exampleEvent(), lambdaContext);
+
+    expect(result.statusCode).toBe(202);
+    const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+    expect(put.Item?.guardrailFlags).toEqual(['PROMPT_ATTACK']);
+  });
+
+  it('returns 503 and stores nothing when the guardrail fails', async () => {
+    bedrockMock.on(ApplyGuardrailCommand).rejects(new Error('Bedrock unavailable'));
+
+    const result = await handler(exampleEvent(), lambdaContext);
+
+    expect(result.statusCode).toBe(503);
+    expect(ddbMock.calls()).toHaveLength(0);
+  });
+
+  it('checks a ticket only after the request is valid', async () => {
+    await handler(withBody('{}'), lambdaContext);
+
+    expect(bedrockMock.calls()).toHaveLength(0);
   });
 
   it('returns 500 when DynamoDB fails', async () => {

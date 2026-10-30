@@ -8,6 +8,7 @@ export enum TicketStatus {
 export interface SupportTicketMessage {
   ticketId: string;
   content: string;
+  flags: string[]; // What the guardrail found (see shared/guardrail.ts). Flagged tickets skip the model.
 }
 
 export enum Urgency {
@@ -54,6 +55,7 @@ export interface SupportTicket {
   createdAt: string;
   updatedAt: string;
   userId: string;
+  guardrailFlags?: string[];
   urgency?: Urgency;
   response?: string;
   analyticsGeneratedAt?: string;

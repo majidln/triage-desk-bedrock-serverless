@@ -77,8 +77,17 @@ Resources:
       Policies:
         - DynamoDBWritePolicy:
             TableName: !Ref SupportTicketTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:ApplyGuardrail
+              Resource:
+                - !GetAtt TicketGuardrail.GuardrailArn
+                - !Sub '${TicketGuardrail.GuardrailArn}:*'
       Environment:
         Variables:
+          GUARDRAIL_ID: !GetAtt TicketGuardrail.GuardrailId
+          GUARDRAIL_VERSION: !GetAtt TicketGuardrailVersion.Version
           POWERTOOLS_SERVICE_NAME: triage-receiver
     Metadata:
       BuildMethod: esbuild
@@ -197,6 +206,56 @@ Resources:
         Target: es2020
         Sourcemap: true
         Bundle: true
+
+  # Checks every ticket before it's stored: masks PII, and flags prompt attacks and requests
+  # that aren't support. Bedrock judges the text itself, so a ticket can't talk its way past it.
+  TicketGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: !Sub '${AWS::StackName}-tickets'
+      # Required by the resource, though nothing here blocks: see the NONE actions below.
+      BlockedInputMessaging: 'This request was blocked.'
+      BlockedOutputsMessaging: 'This response was blocked.'
+      # Detect only (InputAction: NONE): the guardrail reports an attack and the code decides.
+      # Blocking would replace the ticket with the message above, and lose any real question in it.
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+            InputAction: NONE
+      # ANONYMIZE keeps the ticket and swaps the value for a placeholder like {PASSWORD}
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: ANONYMIZE
+          - Type: CREDIT_DEBIT_CARD_CVV
+            Action: ANONYMIZE
+          - Type: CREDIT_DEBIT_CARD_EXPIRY
+            Action: ANONYMIZE
+          - Type: PASSWORD
+            Action: ANONYMIZE
+          - Type: EMAIL
+            Action: ANONYMIZE
+          - Type: PHONE
+            Action: ANONYMIZE
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: NotSupport
+            Type: DENY
+            InputAction: NONE
+            Definition: 'Requests unrelated to using Flowboard, such as creative writing, general knowledge or homework.'
+            Examples:
+              - 'Write me a poem about project management.'
+              - 'What is the capital of France?'
+
+  # The frozen snapshot the receiver calls. Editing the guardrail above changes nothing until a
+  # new version exists: change the Description here to publish one.
+  TicketGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt TicketGuardrail.GuardrailId
+      Description: 'First version: prompt attacks, PII masking, non-support requests'
 
   SupportTicketTable:
     Type: AWS::DynamoDB::Table
