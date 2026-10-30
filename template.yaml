@@ -224,21 +224,34 @@ Resources:
             InputStrength: HIGH
             OutputStrength: NONE
             InputAction: NONE
-      # ANONYMIZE keeps the ticket and swaps the value for a placeholder like {PASSWORD}
+      # ANONYMIZE keeps the ticket and swaps the value for a placeholder like {PASSWORD}.
+      # Action alone doesn't apply to input text: InputEnabled and InputAction are what mask a ticket.
       SensitiveInformationPolicyConfig:
         PiiEntitiesConfig:
           - Type: CREDIT_DEBIT_CARD_NUMBER
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
           - Type: CREDIT_DEBIT_CARD_CVV
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
           - Type: CREDIT_DEBIT_CARD_EXPIRY
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
           - Type: PASSWORD
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
           - Type: EMAIL
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
           - Type: PHONE
             Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
       TopicPolicyConfig:
         TopicsConfig:
           - Name: NotSupport
@@ -255,7 +268,7 @@ Resources:
     Type: AWS::Bedrock::GuardrailVersion
     Properties:
       GuardrailIdentifier: !GetAtt TicketGuardrail.GuardrailId
-      Description: 'First version: prompt attacks, PII masking, non-support requests'
+      Description: 'Second version: PII masked on input'
 
   SupportTicketTable:
     Type: AWS::DynamoDB::Table
