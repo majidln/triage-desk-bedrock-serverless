@@ -42,6 +42,16 @@ Resources:
     Properties:
       StageName: !Ref StageName
       Name: !Sub '${AWS::StackName}-HttpApi'
+      # Throttling for the whole API, not per user: rate is requests per second on average,
+      # burst how many can arrive at once. Over the limit, API Gateway answers 429 itself.
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 20
+        ThrottlingBurstLimit: 40
+      # Tighter for new tickets: each one is a model call, and the processor handles 5 at a time
+      RouteSettings:
+        'POST /support-request':
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
       Auth:
         Authorizers:
           Auth0:
