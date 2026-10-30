@@ -364,8 +364,10 @@ describe('support-request-processor', () => {
 
       const [save] = guardedUpdates();
       expect(save.Key).toEqual({ id: '11111111-2222-3333-4444-555555555555' });
-      const { messages, toolConfig } = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input;
-      expect(messages?.[0].content?.[0].text).toContain('How do I invite a teammate to my board?');
+      const { messages, system, toolConfig } = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input;
+      expect(messages?.[0].content?.[0].text).toBe('<ticket>\nHow do I invite a teammate to my board?\n</ticket>');
+      // The ticket is never part of our instructions
+      expect(system?.[0].text).not.toContain('How do I invite a teammate');
       expect(toolConfig?.toolChoice).toEqual({ tool: { name: 'record_triage' } });
     });
 
