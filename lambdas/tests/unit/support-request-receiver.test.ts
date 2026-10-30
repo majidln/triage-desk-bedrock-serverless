@@ -4,7 +4,7 @@ import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { handler } from '../../handlers/support-request-receiver';
+import { handler, MAX_BODY_BYTES, MAX_CONTENT_LENGTH } from '../../handlers/support-request-receiver';
 
 // uuid v13 is ESM-only, which this Jest setup can't load; a fixed id also makes the assertions exact.
 jest.mock('uuid', () => ({ v4: () => 'test-ticket-id' }));
@@ -26,6 +26,12 @@ function withBody(body: string | undefined): APIGatewayProxyEventV2WithJWTAuthor
   return { ...exampleEvent(), body };
 }
 
+function withClaims(claims: Record<string, string>): APIGatewayProxyEventV2WithJWTAuthorizer {
+  const event = exampleEvent();
+  const authorizer = { ...event.requestContext.authorizer, jwt: { ...event.requestContext.authorizer.jwt, claims } };
+  return { ...event, requestContext: { ...event.requestContext, authorizer } };
+}
+
 describe('support-request-receiver', () => {
   beforeEach(() => {
     ddbMock.reset();
@@ -45,6 +51,29 @@ describe('support-request-receiver', () => {
 
     expect(result.statusCode).toBe(400);
     expect(JSON.parse(result.body!)).toEqual({ message });
+    expect(ddbMock.calls()).toHaveLength(0);
+  });
+
+  it.each([
+    ['content over the limit', JSON.stringify({ content: 'x'.repeat(MAX_CONTENT_LENGTH + 1) })],
+    ['a body over the limit', JSON.stringify({ content: 'hi', padding: 'x'.repeat(MAX_BODY_BYTES) })],
+  ])('returns 413 for %s, without writing the ticket', async (_label, body) => {
+    const result = await handler(withBody(body), lambdaContext);
+
+    expect(result.statusCode).toBe(413);
+    expect(ddbMock.calls()).toHaveLength(0);
+  });
+
+  it('accepts content of exactly the maximum length', async () => {
+    const result = await handler(withBody(JSON.stringify({ content: 'x'.repeat(MAX_CONTENT_LENGTH) })), lambdaContext);
+
+    expect(result.statusCode).toBe(202);
+  });
+
+  it('returns 401 when the token has no sub, without writing the ticket', async () => {
+    const result = await handler(withClaims({}), lambdaContext);
+
+    expect(result.statusCode).toBe(401);
     expect(ddbMock.calls()).toHaveLength(0);
   });
 

@@ -64,7 +64,6 @@ export interface SupportTicket {
 
 export interface CreateTicketRequest {
   content: string;
-  customerId?: string;
 }
 
 export interface CreateTicketResponse {
