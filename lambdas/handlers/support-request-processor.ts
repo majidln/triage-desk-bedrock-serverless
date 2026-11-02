@@ -17,6 +17,7 @@ import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
 import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
 import { logger } from '../shared/logger';
+import { notificationBody, notificationSubject } from '../shared/notification';
 import { priceFor } from '../shared/model-prices';
 
 // Read once at cold start: a missing variable fails here, not on the first ticket.
@@ -277,19 +278,14 @@ async function markFailed(ticketId: string, failure: TicketFailure): Promise<Gua
   });
 }
 
-// Tells the agent why a flagged ticket has no real draft, and that it needs a person.
-function flagNote(flags: string[]): string {
-  return flags.length > 0 ? `\n\nFlagged by the guardrail, needs review: ${flags.join(', ')}` : '';
-}
-
 // Sends the email, then records that it was sent. If the second write fails, the retry
 // sends the email again: a rare duplicate email is better than a missed one.
 async function notifyAndRecord(message: SupportTicketMessage, triage: TicketTriage): Promise<void> {
   await snsClient.send(
     new PublishCommand({
       TopicArn: config.topicArn,
-      Message: `New support ticket received: ${message.ticketId}${flagNote(message.flags)}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
-      Subject: `::${triage.urgency}:: New Support Ticket`,
+      Subject: notificationSubject(message, triage),
+      Message: notificationBody(message, triage),
     }),
   );
   await docClient.send(

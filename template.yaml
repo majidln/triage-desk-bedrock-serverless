@@ -413,6 +413,8 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub '${AWS::StackName}-TicketNotifications'
+      # Encrypted at rest with the AWS-managed key: free, and nothing to manage
+      KmsMasterKeyId: alias/aws/sns
       Tags:
       - Key: Purpose
         Value: SupportTicketNotifications

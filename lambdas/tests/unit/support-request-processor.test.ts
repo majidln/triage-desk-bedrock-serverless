@@ -313,8 +313,8 @@ describe('support-request-processor', () => {
 
       const published = snsMock.commandCalls(PublishCommand);
       expect(published).toHaveLength(1);
-      expect(published[0].args[0].input.Subject).toContain('CRITICAL');
-      expect(published[0].args[0].input.Message).toContain(saved.response);
+      expect(published[0].args[0].input.Subject).toBe('[CRITICAL] Support ticket ticket-1');
+      expect(published[0].args[0].input.Message).toContain('Urgency: CRITICAL');
     });
 
     it('never overwrites a processed ticket with FAILED', async () => {
