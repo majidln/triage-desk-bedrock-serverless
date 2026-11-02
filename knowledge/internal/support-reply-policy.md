@@ -6,7 +6,7 @@ How frontline support answers tickets. Every draft reply must follow it, whateve
 
 | Ticket is about | Who handles it | Support's reply |
 |---|---|---|
-| Refunds, billing changes, charges | Billing team | Confirm it's received and give the time frame from *Refunds and cancellations*. Never a specific date |
+| Refunds, billing changes, charges | Billing team | Confirm it's received and give the time frame from *Refunds and cancellations* in the *Billing guide*. Never a specific date |
 | Security reports, suspected breaches, account takeover | Security team (`security@flowboard.example`) | Acknowledge and say it's been forwarded. Don't investigate, confirm or deny anything |
 | An outage or a bug affecting many customers | Engineering | Point to the status page and say it's been escalated. No fix time |
 | A feature that doesn't exist | Product | Thank the customer and say it's logged. No release date or promise |
