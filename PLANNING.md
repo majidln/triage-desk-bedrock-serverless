@@ -252,9 +252,12 @@ v0 returns the AI's reply straight to the customer. Even grounded and guarded, s
 
 Confidence-based routing: high-confidence FAQ answers can be auto-sent; CRITICAL tickets, policy exceptions and low-confidence drafts wait for an agent's approval. A minimal approve/edit endpoint.
 
+Notifications replace the support email: agents get a **Slack** message for each triaged ticket (id, urgency, flags and a link, never the ticket text), and the customer gets an email through **SES** once a reply is approved or auto-sent ("your ticket has a reply", never the reply itself). The customer's address is looked up in Auth0 by `sub` when sending, not stored in the table.
+
 **Exit:**
 - [ ] Routing rules written down and enforced.
 - [ ] CRITICAL tickets never auto-sent, proven on the evaluation set.
+- [ ] Agents notified in Slack, and customers emailed only after approval or auto-send; neither message carries ticket or reply text.
 
 ---
 
