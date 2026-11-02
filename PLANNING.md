@@ -225,7 +225,7 @@ The model writes plausible, generic replies. It doesn't know Flowboard's refund 
 
 Write the Flowboard help center and policy docs (fictional, in the repo). Put them in S3, connect a **Bedrock Knowledge Base**, retrieve before generating, and include the sources in the draft.
 
-**The real lesson: what retrieval returns decides answer quality more than the model does.** Try at least two chunking strategies and measure both.
+**The real lesson: what retrieval returns decides answer quality more than the model does.** Try at least two chunking strategies and measure both. See [STEP-4-GUIDE.md](docs/STEP-4-GUIDE.md).
 
 **Exit:**
 - [ ] Every draft cites the documents it used.
