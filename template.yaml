@@ -8,6 +8,10 @@ Parameters:
   ModelId:
     Type: String
     Default: amazon.nova-lite-v1:0
+  Auth0Domain :
+    Type: String
+  Auth0Audience:
+    Type: String
   AlertEmail:
     Type: String
     Default: ''
@@ -16,13 +20,21 @@ Parameters:
 Conditions:
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
+# Settings every function shares. A function's own Environment variables are added to these.
+# Metadata (the esbuild settings) can't go here: SAM doesn't support it in Globals.
 Globals:
   Function:
     Runtime: nodejs24.x
+    Architectures:
+      - x86_64
     Timeout: 30
     CodeUri: lambdas/
     LoggingConfig:
       LogFormat: JSON
+    Environment:
+      Variables:
+        SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
+        POWERTOOLS_LOG_LEVEL: INFO
 
 Resources:
   HttpApi:
@@ -30,14 +42,31 @@ Resources:
     Properties:
       StageName: !Ref StageName
       Name: !Sub '${AWS::StackName}-HttpApi'
+      # Throttling for the whole API, not per user: rate is requests per second on average,
+      # burst how many can arrive at once. Over the limit, API Gateway answers 429 itself.
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 20
+        ThrottlingBurstLimit: 40
+      # Tighter for new tickets: each one is a model call, and the processor handles 5 at a time
+      RouteSettings:
+        'POST /support-request':
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+      Auth:
+        Authorizers:
+          Auth0:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub 'https://${Auth0Domain}/'
+              audience:
+                - !Ref Auth0Audience
+        DefaultAuthorizer: Auth0
 
   SupportRequestReceiverFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ReceiverFunction'
       Handler: handlers/support-request-receiver.handler
-      Architectures:
-      - x86_64
       Events:
         ReceiveSupportRequest:
           Type: HttpApi
@@ -46,13 +75,22 @@ Resources:
             Path: /support-request
             Method: post
       Policies:
-        - DynamoDBWritePolicy:
-            TableName: !Ref SupportTicketTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt SupportTicketTable.Arn
+            - Effect: Allow
+              Action:
+                - bedrock:ApplyGuardrail
+              Resource:
+                - !GetAtt TicketGuardrail.GuardrailArn
+                - !Sub '${TicketGuardrail.GuardrailArn}:*'
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
+          GUARDRAIL_ID: !GetAtt TicketGuardrail.GuardrailId
+          GUARDRAIL_VERSION: !GetAtt TicketGuardrailVersion.Version
           POWERTOOLS_SERVICE_NAME: triage-receiver
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -68,8 +106,6 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-FetchFunction'
       Handler: handlers/fetch-support-ticket.handler
-      Architectures:
-      - x86_64
       Events:
         FetchSupportRequest:
           Type: HttpApi
@@ -78,18 +114,52 @@ Resources:
             Path: /support-request
             Method: get
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref SupportTicketTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt SupportTicketTable.Arn
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           POWERTOOLS_SERVICE_NAME: triage-fetch
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints:
           - handlers/fetch-support-ticket.ts
+        Minify: true
+        Target: es2020
+        Sourcemap: true
+        Bundle: true
+
+  ListSupportTicketsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ListFunction'
+      Handler: handlers/list-support-tickets.handler
+      Events:
+        ListSupportTickets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /support-requests
+            Method: get
+      # Only a query on the by-user index: it can't read the table itself, or any ticket's content
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub '${SupportTicketTable.Arn}/index/TicketsByUser'
+      Environment:
+        Variables:
+          TICKETS_BY_USER_INDEX: TicketsByUser
+          POWERTOOLS_SERVICE_NAME: triage-list
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - handlers/list-support-tickets.ts
         Minify: true
         Target: es2020
         Sourcemap: true
@@ -102,8 +172,6 @@ Resources:
       Handler: handlers/support-request-processor.handler
       # A batch of 5 takes ~15 s; 60 s leaves room for slow model calls (see PLANNING.md §3)
       Timeout: 60
-      Architectures:
-      - x86_64
       Events:
         ProcessQueue:
           Type: SQS
@@ -117,11 +185,16 @@ Resources:
             ScalingConfig:
               MaximumConcurrency: 5
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref SupportTicketTable
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt SupportTicketNotificationTopic.TopicName
         - Statement:
+            # UpdateItem saves the ticket. GetItem is for the duplicate check: a failed condition
+            # returns the current ticket (ALL_OLD), and returning it is a read.
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+              Resource: !GetAtt SupportTicketTable.Arn
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
@@ -131,11 +204,9 @@ Resources:
         LogGroup: !Ref ProcessorLogGroup
       Environment:
         Variables:
-          SUPPORT_TICKETS_TABLE: !Ref SupportTicketTable
           BEDROCK_MODEL_ID: !Ref ModelId
           SNS_TOPIC_ARN: !GetAtt SupportTicketNotificationTopic.TopicArn
           POWERTOOLS_SERVICE_NAME: triage-processor
-          POWERTOOLS_LOG_LEVEL: INFO
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -146,6 +217,69 @@ Resources:
         Sourcemap: true
         Bundle: true
 
+  # Checks every ticket before it's stored: masks PII, and flags prompt attacks and requests
+  # that aren't support. Bedrock judges the text itself, so a ticket can't talk its way past it.
+  TicketGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: !Sub '${AWS::StackName}-tickets'
+      # Required by the resource, though nothing here blocks: see the NONE actions below.
+      BlockedInputMessaging: 'This request was blocked.'
+      BlockedOutputsMessaging: 'This response was blocked.'
+      # Detect only (InputAction: NONE): the guardrail reports an attack and the code decides.
+      # Blocking would replace the ticket with the message above, and lose any real question in it.
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+            InputAction: NONE
+      # ANONYMIZE keeps the ticket and swaps the value for a placeholder like {PASSWORD}.
+      # Action alone doesn't apply to input text: InputEnabled and InputAction are what mask a ticket.
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+          - Type: CREDIT_DEBIT_CARD_CVV
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+          - Type: CREDIT_DEBIT_CARD_EXPIRY
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+          - Type: PASSWORD
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+          - Type: EMAIL
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+          - Type: PHONE
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: NotSupport
+            Type: DENY
+            InputAction: NONE
+            Definition: 'Requests unrelated to using Flowboard, such as creative writing, general knowledge or homework.'
+            Examples:
+              - 'Write me a poem about project management.'
+              - 'What is the capital of France?'
+
+  # The frozen snapshot the receiver calls. Editing the guardrail above changes nothing until a
+  # new version exists: change the Description here to publish one.
+  TicketGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt TicketGuardrail.GuardrailId
+      Description: 'Second version: PII masked on input'
+
   SupportTicketTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Delete
@@ -155,9 +289,28 @@ Resources:
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
+      # A user's tickets, newest first, for GET /support-requests. Only what that route
+      # returns is copied into the index: never the content. Tickets without a userId
+      # (from before Step 3) aren't in it.
+      GlobalSecondaryIndexes:
+        - IndexName: TicketsByUser
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - triage
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true
@@ -260,6 +413,8 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub '${AWS::StackName}-TicketNotifications'
+      # Encrypted at rest with the AWS-managed key: free, and nothing to manage
+      KmsMasterKeyId: alias/aws/sns
       Tags:
       - Key: Purpose
         Value: SupportTicketNotifications

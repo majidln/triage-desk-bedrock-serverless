@@ -147,8 +147,10 @@ cd eval && npm test
 Run the evaluation against the deployed stack. Use the `HttpApiUrl` output from `sam deploy`, and run nothing else on the same Bedrock model while it runs: the report compares the cost the tickets recorded with Bedrock's account-wide CloudWatch metrics, and other use of the model shows up as a difference:
 
 ```bash
-cd eval && API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com/Dev TABLE_NAME=triage-desk-Table npx tsx run.ts --label v0
+cd eval && API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com/Dev TABLE_NAME=triage-desk-Table TOKEN=<access-token> npx tsx run.ts --label v0
 ```
+
+`TOKEN` is an Auth0 access token for the API: since Step 3, a request without one gets `401`.
 
 On a new AWS account, whose Lambda concurrency limit is 10, add `CONCURRENCY=1`, or the receiver gets throttled and tickets show up as `not-submitted`.
 

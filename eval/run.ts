@@ -3,6 +3,7 @@
 // Usage:
 //   API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com/Dev \
 //   TABLE_NAME=<stack-name>-Table \
+//   TOKEN=<Auth0 access token> \
 //   npx tsx run.ts --label v0 [--tickets other.jsonl]
 //
 // The five parts, in order: submit -> collect -> score -> cost -> report.
@@ -17,6 +18,7 @@ import {
   PRICE_PER_M_OUTPUT,
   REGION,
   TABLE_NAME,
+  TOKEN,
 } from './src/config.ts';
 import { costPerTicket, ticketCost, ticketCostPerTicket, waitForUsage } from './src/cost.ts';
 import { printAccuracyBy, printLevels, printMatrix, printRedTeam, printReplyChecks } from './src/print.ts';
@@ -31,8 +33,8 @@ import type { Outcome } from './src/types.ts';
 import { groupBy, pct, secs } from './src/util.ts';
 
 async function main() {
-  if (!API_URL || !TABLE_NAME) {
-    throw new Error('Set API_URL and TABLE_NAME');
+  if (!API_URL || !TABLE_NAME || !TOKEN) {
+    throw new Error('Set API_URL, TABLE_NAME and TOKEN');
   }
   const label = arg('--label') ?? 'run';
   const ticketsPath = arg('--tickets') ?? new URL('./tickets.jsonl', import.meta.url).pathname;

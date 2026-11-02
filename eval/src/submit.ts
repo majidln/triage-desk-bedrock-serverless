@@ -1,6 +1,6 @@
 // Part 1: submit every ticket to the API, a few at a time.
 
-import { API_URL, CONCURRENCY } from './config.ts';
+import { API_URL, CONCURRENCY, TOKEN } from './config.ts';
 import type { Submission, Ticket } from './types.ts';
 
 export async function submitTicket(ticket: Ticket): Promise<Submission> {
@@ -8,7 +8,7 @@ export async function submitTicket(ticket: Ticket): Promise<Submission> {
   try {
     const res = await fetch(`${API_URL}/support-request`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
       // Only the content: the pipeline must never see the answer key.
       body: JSON.stringify({ content: ticket.content }),
       signal: AbortSignal.timeout(10_000),

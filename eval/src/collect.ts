@@ -13,7 +13,7 @@ export interface TicketItem {
   id: string;
   status?: string;
   createdAt: string;
-  analytics?: { urgency?: string; response?: string; generatedAt?: string };
+  triage?: { urgency?: string; response?: string; generatedAt?: string };
   usage?: TicketUsage;
 }
 
@@ -36,13 +36,13 @@ export async function batchGet(ids: string[]): Promise<Map<string, TicketItem>> 
 }
 
 export function toCollected(submission: Submission, item: TicketItem): Collected {
-  const response: string | undefined = item.analytics?.response;
+  const response: string | undefined = item.triage?.response;
   const created = Date.parse(item.createdAt);
-  const generated = Date.parse(item.analytics?.generatedAt ?? '');
+  const generated = Date.parse(item.triage?.generatedAt ?? '');
   return {
     submission,
     outcome: response && FALLBACK_RESPONSES.includes(response.trim()) ? 'fallback' : 'processed',
-    urgency: item.analytics?.urgency,
+    urgency: item.triage?.urgency,
     response,
     processingMs: Number.isNaN(created) || Number.isNaN(generated) ? undefined : generated - created,
     usage: item.usage,

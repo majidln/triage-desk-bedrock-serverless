@@ -1,5 +1,8 @@
 // The environment the template gives the functions, so handlers can load in unit tests.
 process.env.SUPPORT_TICKETS_TABLE = 'test-tickets-table';
+process.env.TICKETS_BY_USER_INDEX = 'test-tickets-by-user';
+process.env.GUARDRAIL_ID = 'test-guardrail';
+process.env.GUARDRAIL_VERSION = '1';
 process.env.SNS_TOPIC_ARN = 'arn:aws:sns:us-east-1:123456789012:test-topic';
 process.env.BEDROCK_MODEL_ID = 'amazon.nova-lite-v1:0';
 

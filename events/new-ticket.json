@@ -26,8 +26,7 @@
     "authorizer": {
       "jwt": {
         "claims": {
-          "claim1": "value1",
-          "claim2": "value2"
+          "sub": "auth0|test-user"
         },
         "scopes": ["scope1", "scope2"]
       }

@@ -10,12 +10,14 @@ import {
   TicketFailure,
   LlmUsage,
   TriageResult,
+  Urgency,
 } from '../shared/types';
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
 import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
 import { logger } from '../shared/logger';
+import { notificationBody, notificationSubject } from '../shared/notification';
 import { priceFor } from '../shared/model-prices';
 
 // Read once at cold start: a missing variable fails here, not on the first ticket.
@@ -77,6 +79,21 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
   return { batchItemFailures };
 };
 
+// The reply to a ticket the guardrail flagged. Sent without calling the model, so what the ticket
+// says can't reach it; a person reads the ticket instead, and answers any real question in it.
+export const FLAGGED_REPLY =
+  'Thank you for contacting Flowboard support. A support agent will review your request and get back to you.';
+
+// The triage of a flagged ticket: never the model's, so it costs nothing. LOW, because the
+// rubric labels an injection by what's left of the ticket, and it isn't an outage. This is a
+// decision, not a failure: FAILED would fire the error alarm on every injection attempt.
+function flaggedTriage(): TriageResult {
+  return {
+    triage: { urgency: Urgency.LOW, response: FLAGGED_REPLY },
+    usage: { modelId: 'none', inputTokens: 0, outputTokens: 0, costUsd: 0 },
+  };
+}
+
 // Returning an outcome means "done, delete the message"; throwing means "retry it".
 // SQS can deliver the same message more than once, so every step here is safe to repeat.
 export async function processRecord(record: SQSRecord): Promise<Outcome> {
@@ -98,7 +115,7 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
   // There's no fallback answer: a transient error is retried, a permanent one marks the ticket FAILED.
   let result: TriageResult;
   try {
-    result = await invokeTriageModel(message.content, config.modelId);
+    result = message.flags.length > 0 ? flaggedTriage() : await invokeTriageModel(message.content, config.modelId);
   } catch (err) {
     if (classifyError(err) === 'transient') {
       throw err;
@@ -123,6 +140,7 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     ticketId,
     messageId,
     urgency: triage.urgency,
+    flags: message.flags,
     modelId: usage.modelId,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -145,9 +163,9 @@ async function alreadyHandled(
   }
   // The earlier delivery saved the triage but never sent the email (SNS failed, then the
   // retry lost the race to its own save). Send it now, with the triage that was saved.
-  if (current.status === TicketStatus.PROCESSED && current.analytics && !current.notifiedAt) {
-    await notifyAndRecord(message, current.analytics);
-    logger.info('TicketProcessed', { ticketId, messageId, urgency: current.analytics.urgency, notifyOnly: true });
+  if (current.status === TicketStatus.PROCESSED && current.triage && !current.notifiedAt) {
+    await notifyAndRecord(message, current.triage);
+    logger.info('TicketProcessed', { ticketId, messageId, urgency: current.triage.urgency, notifyOnly: true });
     return 'processed';
   }
   logger.info('DuplicateMessage', { ticketId, messageId, status: current.status });
@@ -176,11 +194,13 @@ function parseMessage(body: string): SupportTicketMessage {
   if (typeof ticket.id !== 'string' || typeof ticket.content !== 'string') {
     throw new PermanentError('Stream record has no ticket id or content');
   }
-  return { ticketId: ticket.id, content: ticket.content };
+  const guardrailFlags = (ticket.guardrail as { flags?: unknown } | undefined)?.flags;
+  const flags = Array.isArray(guardrailFlags) ? guardrailFlags.map(String) : [];
+  return { ticketId: ticket.id, content: ticket.content, flags };
 }
 
 // The parts of a stored ticket the duplicate check reads.
-type StoredTicket = Pick<SupportTicket, 'status' | 'notifiedAt'> & { analytics?: TicketTriage };
+type StoredTicket = Pick<SupportTicket, 'status' | 'notifiedAt' | 'triage'>;
 
 // Whether a guarded update was made. When it wasn't, `current` is the ticket as it is now,
 // or null when there's no such ticket.
@@ -215,7 +235,7 @@ async function saveTriage(ticketId: string, triage: TicketTriage, usage: LlmUsag
     Key: {
       id: ticketId,
     },
-    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics, #usage = :usage',
+    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, triage = :triage, #usage = :usage',
     ExpressionAttributeNames: {
       '#status': 'status',
       '#usage': 'usage',
@@ -223,7 +243,7 @@ async function saveTriage(ticketId: string, triage: TicketTriage, usage: LlmUsag
     ExpressionAttributeValues: {
       ':status': TicketStatus.PROCESSED,
       ':updatedAt': now,
-      ':analytics': {
+      ':triage': {
         ...triage,
         generatedAt: now,
       },
@@ -265,8 +285,8 @@ async function notifyAndRecord(message: SupportTicketMessage, triage: TicketTria
   await snsClient.send(
     new PublishCommand({
       TopicArn: config.topicArn,
-      Message: `New support ticket received: ${message.ticketId}\n\n\n\nContent: ${message.content}\n\n\n\nDraft reply: ${triage.response}`,
-      Subject: `::${triage.urgency}:: New Support Ticket`,
+      Subject: notificationSubject(message, triage),
+      Message: notificationBody(message, triage),
     }),
   );
   await docClient.send(
