@@ -103,6 +103,32 @@ These are the things a *good* reply never does, whatever the ticket says.
 - **F-94** Never invent a feature, a setting, a menu path or a plan that isn't on this sheet.
 - **F-95** Stay on Flowboard support topics. Politely decline anything else.
 
+## 11. Added for the Knowledge Base
+
+Added on 2026-11-02, after the tickets were written, so the Knowledge Base covers topics no ticket asks about. None of these changes what an existing ticket expects.
+
+- **F-100** Roles: **workspace admin**, **member** and **guest** (guests on Business only). The creator of a workspace is always an admin. Admins manage members and settings, export and reset 2FA; members create and edit boards and tasks.
+- **F-101** Admins invite people by email under *Settings → Members*. An invitation expires after **7 days**.
+- **F-102** Removing a member (admin, *Settings → Members*) leaves their tasks on the board, unassigned.
+- **F-103** A guest is invited to specific boards, sees only those, and can comment and edit tasks on them. They can't see other boards, the member list, billing or settings.
+- **F-110** Password reset: **Forgot password?** on the login page; the emailed link is valid **1 hour**. Passwords need at least **10 characters**.
+- **F-111** Name, photo and email are changed under *Settings → Profile*. Changing the email sends a confirmation link to the new address and a notice to the old one.
+- **F-120** Notifications arrive in-app, by email and as push on iOS and Android. Settings are per person, under *Settings → Notifications*. Mentions and assignments are on by default; a **daily digest** can replace individual emails.
+- **F-130** Largest file: **25 MB** on Free, **250 MB** on Team and Business.
+- **F-131** Storage is shared by the whole workspace. When it's full, new uploads are blocked until files are deleted or the plan is upgraded.
+- **F-140** Custom field types: text, number, date, dropdown, checkbox.
+- **F-141** Comments support **@mentions**, which notify the person.
+- **F-142** The timeline shows tasks that have a start date and a due date.
+- **F-143** **Archived** boards and tasks are hidden and can be restored at any time; they don't expire like deleted items.
+- **F-150** SAML SSO works with any **SAML 2.0** identity provider, set up by an admin under *Settings → Security*.
+- **F-151** The **audit log** (Business) records sign-ins, membership changes and settings changes, is viewed by admins under *Settings → Audit log*, and is kept **12 months**.
+- **F-160** Payment is by **credit or debit card** only (Visa, Mastercard, American Express). No PayPal, bank transfer or invoice payment.
+- **F-161** The billing owner can add a **tax or VAT ID** on the billing page; it applies to future invoices only.
+- **F-162** Switching between monthly and annual billing takes effect at the **next renewal**.
+- **F-170** Data is **encrypted in transit and at rest**.
+- **F-171** Only the **workspace owner** can delete a workspace, under *Settings → General → Delete workspace*.
+- **F-172** Business customers can request a **data processing agreement (DPA)** through support.
+
 ---
 
 ## Changelog
@@ -110,3 +136,4 @@ These are the things a *good* reply never does, whatever the ticket says.
 | Date | Change | Tickets affected |
 |---|---|---|
 | | Initial version | |
+| 2026-11-02 | Added section 11 (F-100 to F-172) for Knowledge Base coverage; no existing fact changed | None |
