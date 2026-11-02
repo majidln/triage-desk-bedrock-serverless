@@ -14,9 +14,9 @@ Out of scope: email or chat intake, languages other than English, CRM integratio
 |---|---|---|---|---|
 | v0 | The naive LLM call | Done | `v0-naive-llm-call` | Free |
 | 0 | Baseline and evaluation set | Done | `step-0-complete` | Free |
-| 1 | Reliability | Not started | | Free |
-| 2 | Structured output with the Converse API | Not started | | Free |
-| 3 | Guardrails and security | Not started | | Free (Guardrails bill per request) |
+| 1 | Reliability | Done | `step-1-complete` | Free |
+| 2 | Structured output with the Converse API | Done | `step-2-complete` | Free |
+| 3 | Guardrails and security | Done | `step-3-complete` | Free (Guardrails bill per request) |
 | 4 | Grounding with a Knowledge Base | Not started | | Depends on the vector store |
 | 5 | Model comparison | Not started | | Free |
 | 6 | Human in the loop | Optional, not started | | |
@@ -212,11 +212,11 @@ The API is open, unthrottled and unbounded, and each request costs a model call.
 System prompt with the ticket clearly separated as data. A **Bedrock Guardrail** for PII redaction, denied topics and prompt-attack filtering. API auth, throttling and a maximum size. Least-privilege IAM. Stop logging ticket contents. See [STEP-3-GUIDE.md](docs/STEP-3-GUIDE.md).
 
 **Exit:**
-- [ ] Every red-team ticket in the evaluation set behaves correctly.
-- [ ] No ticket text or PII in any log group, checked with a Logs Insights query.
-- [ ] An unauthenticated request gets `401`; an oversized one gets `413`/`400`; a burst gets throttled.
-- [ ] The stored ticket has one nested map per writer (`guardrail`, `triage`, `usage`), before the evaluation run.
-- [ ] Evaluation re-run, `step-3` row.
+- [x] Every red-team ticket in the evaluation set behaves correctly. *(no attack worked: T36 and T40 flagged and kept from the model, T37's injection and refund ignored, T38 and T39 masked and refused; T37, T39 and T41 got an urgency one level off, a triage error left to Steps 4 and 5)*
+- [x] No ticket text or PII in any log group, checked with a Logs Insights query. *(a canary ticket: 0 hits in all 5 log groups; its id found)*
+- [x] An unauthenticated request gets `401`; an oversized one gets `413`/`400`; a burst gets throttled. *(`401`; `413`; 29 of 200 got `429`, best effort)*
+- [x] The stored ticket has one nested map per writer (`guardrail`, `triage`, `usage`), before the evaluation run.
+- [x] Evaluation re-run, `step-3` row. *(23/42, CRITICAL 4/8, $0.000068 per ticket plus ~$0.0004 for the guardrail)*
 
 *Guardrails bill per text unit processed. Still cents per evaluation run.*
 
@@ -278,7 +278,7 @@ Deploy → verify the exit criteria by hand → run the evaluation and record nu
 | Question | Recommendation | Decision |
 |---|---|---|
 | Vector store for the Knowledge Base (Step 4) | S3 Vectors or Aurora Serverless pgvector, not OpenSearch Serverless, which has a high hourly minimum | Open |
-| Auth for the public API (Step 3) | A JWT authorizer on the HTTP API, with Cognito or Auth0 as the issuer. API keys and usage plans need a REST API | Open |
+| Auth for the public API (Step 3) | A JWT authorizer on the HTTP API, with Cognito or Auth0 as the issuer. API keys and usage plans need a REST API | Auth0, through the HTTP API's JWT authorizer |
 | Judge model for reply quality (Step 5) | A stronger model than the one being judged, checked against hand labels | Open |
 | Auto-send vs. human-approved replies (Step 6) | Human approval for CRITICAL and policy topics | Open |
 | Blog format | One post per step | Open |
