@@ -8,6 +8,10 @@ Parameters:
   ModelId:
     Type: String
     Default: amazon.nova-lite-v1:0
+  EmbeddingModelId:
+      Type: String
+      Default: amazon.titan-embed-text-v2:0
+      Description: Bedrock model that turns knowledge chunks into vectors. Changing it means a new index and a full re-ingest.
   Auth0Domain :
     Type: String
   Auth0Audience:
@@ -318,6 +322,147 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_IMAGE
 
+  # The Markdown the Knowledge Base reads: knowledge/help-center/ and knowledge/internal/.
+  # Bedrock reads it during ingestion; nothing else does. No name: S3 names are global, so CloudFormation picks a unique one.
+  KnowledgeDocsBucket:
+    Type: AWS::S3::Bucket
+    # Deleted with the stack, but only once it's empty: run the upload script's cleanup first
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      # Nobody outside the account reads these files
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # S3-managed keys: free, and the Bedrock role needs no KMS permissions
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # Holds the Knowledge Base's vectors: one per chunk of knowledge/. Encrypted with
+  # S3-managed keys by default. Bills for storage only, nothing per hour.
+  KnowledgeVectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+
+  # The searchable set of vectors: one per chunk of knowledge/. Every property is fixed at
+  # creation; changing one replaces the index, and everything must be ingested again.
+  KnowledgeVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt KnowledgeVectorBucket.VectorBucketArn
+      # Must equal the embedding model's output: Titan Text Embeddings V2 gives 1,024 numbers
+      Dimension: 1024
+      # Text embeddings carry meaning in a vector's direction, not its length
+      DistanceMetric: cosine
+      DataType: float32
+      # Bedrock stores each chunk's text and source in these two keys. Filterable metadata
+      # is capped at 2 KB per vector, and a 300-token chunk is bigger than that.
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+          - AMAZON_BEDROCK_METADATA
+
+  # The identity Bedrock uses for ingestion and retrieval: read the documents, embed them
+  # with Titan, and write and query the vectors. Nothing else uses this role.
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            # Only Knowledge Bases in this account. Not this one's ARN: the Knowledge Base
+            # refers to the role, so the role can't refer back without a circular dependency.
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*'
+      Policies:
+        - PolicyName: knowledge-base
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read the documents
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt KnowledgeDocsBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub '${KnowledgeDocsBucket.Arn}/*'
+              # Turn each chunk into 1,024 numbers
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
+              # Store the vectors, replace them when a document changes, and search them
+              - Effect: Allow
+                Action:
+                  - s3vectors:PutVectors
+                  - s3vectors:GetVectors
+                  - s3vectors:DeleteVectors
+                  - s3vectors:QueryVectors
+                  - s3vectors:GetIndex
+                Resource: !GetAtt KnowledgeVectorIndex.IndexArn
+
+  # Joins the embedding model to the vector index, and owns the Retrieve API the
+  # processor will call. Bedrock works as KnowledgeBaseRole for everything it does.
+  KnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Sub '${AWS::StackName}-flowboard'
+      Description: Flowboard help center and support policy, for grounding ticket replies
+      RoleArn: !GetAtt KnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        # Search by meaning over vectors. The other types search Kendra, a SQL database or a store AWS manages
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
+          EmbeddingModelConfiguration:
+            BedrockEmbeddingModelConfiguration:
+              # Must equal the index's Dimension
+              Dimensions: 1024
+              EmbeddingDataType: FLOAT32
+      StorageConfiguration:
+        Type: S3_VECTORS
+        S3VectorsConfiguration:
+          IndexArn: !GetAtt KnowledgeVectorIndex.IndexArn
+
+  # What the Knowledge Base reads, and how it cuts it into chunks. One per chunking
+  # strategy: chunking can't change in place, so a new strategy means a new data source.
+  KnowledgeDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      KnowledgeBaseId: !Ref KnowledgeBase
+      # The strategy is in the name: two data sources in one Knowledge Base can't share a name,
+      # and CloudFormation creates the replacement before deleting the old one
+      Name: flowboard-docs-fixed-300
+      # Deleting this data source also deletes its vectors from the index
+      DataDeletionPolicy: DELETE
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          # The whole bucket: scripts/sync-knowledge.sh puts only help-center/ and internal/
+          # there. InclusionPrefixes takes a single prefix, so it can't name both folders.
+          BucketArn: !GetAtt KnowledgeDocsBucket.Arn
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            # About a third of the longest guide, so most guides become 3–4 chunks
+            MaxTokens: 300
+            # Each chunk repeats the last 20% of the one before, so a sentence on a cut
+            # is whole in at least one of them
+            OverlapPercentage: 20
+
   SupportRequestQueue:
     Type: AWS::SQS::Queue
     DeletionPolicy: Delete
@@ -612,6 +757,22 @@ Outputs:
   AlertTopicArn:
     Description: SNS Topic ARN for pipeline alarms - Share this with technical admins to subscribe
     Value: !Ref AlertTopic
+
+  KnowledgeDocsBucketName:
+    Description: Bucket the knowledge/ documents are synced to before ingestion
+    Value: !Ref KnowledgeDocsBucket
+
+  KnowledgeVectorIndexArn:
+    Description: Vector index the Knowledge Base writes chunks to; use it with aws s3vectors list-vectors
+    Value: !GetAtt KnowledgeVectorIndex.IndexArn
+
+  KnowledgeBaseId:
+    Description: Knowledge Base the processor retrieves from; scripts/sync-knowledge.sh reads it
+    Value: !Ref KnowledgeBase
+
+  KnowledgeDataSourceId:
+    Description: Data source scripts/sync-knowledge.sh starts ingestion jobs for
+    Value: !GetAtt KnowledgeDataSource.DataSourceId
 
   SubscriptionInstructions:
     Description: Instructions for subscribing to notifications
