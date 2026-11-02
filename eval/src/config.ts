@@ -3,6 +3,8 @@
 // The stack output ends with "/", so strip it to avoid ".../Dev//support-request".
 export const API_URL = process.env.API_URL?.replace(/\/+$/, '');
 export const TABLE_NAME = process.env.TABLE_NAME;
+// An Auth0 access token for the API (Step 3). Tickets are submitted as that user.
+export const TOKEN = process.env.TOKEN;
 export const REGION = process.env.AWS_REGION ?? 'us-east-1';
 // Tickets in flight at once. Lower it with CONCURRENCY=1 on an account whose
 // Lambda concurrency limit is low (new accounts start at 10).
