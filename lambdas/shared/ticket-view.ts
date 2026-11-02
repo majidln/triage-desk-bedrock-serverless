@@ -7,12 +7,12 @@ export interface StoredTicket {
   userId?: string;
   status: TicketStatus;
   createdAt: string;
-  analytics?: { response?: string };
+  triage?: { response?: string };
 }
 
 // The DynamoDB projection for StoredTicket. `status` is a reserved word, hence the name.
 export const STORED_TICKET_PROJECTION = {
-  ProjectionExpression: 'id, userId, #status, createdAt, analytics',
+  ProjectionExpression: 'id, userId, #status, createdAt, triage',
   ExpressionAttributeNames: { '#status': 'status' },
 };
 
@@ -21,7 +21,7 @@ export const STORED_TICKET_PROJECTION = {
 export function toTicketView(ticket: StoredTicket): TicketView {
   const view: TicketView = { ticketId: ticket.id, status: ticket.status, createdAt: ticket.createdAt };
   if (ticket.status === TicketStatus.PROCESSED) {
-    view.response = ticket.analytics?.response;
+    view.response = ticket.triage?.response;
   }
   return view;
 }

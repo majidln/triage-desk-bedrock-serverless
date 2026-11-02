@@ -163,9 +163,9 @@ async function alreadyHandled(
   }
   // The earlier delivery saved the triage but never sent the email (SNS failed, then the
   // retry lost the race to its own save). Send it now, with the triage that was saved.
-  if (current.status === TicketStatus.PROCESSED && current.analytics && !current.notifiedAt) {
-    await notifyAndRecord(message, current.analytics);
-    logger.info('TicketProcessed', { ticketId, messageId, urgency: current.analytics.urgency, notifyOnly: true });
+  if (current.status === TicketStatus.PROCESSED && current.triage && !current.notifiedAt) {
+    await notifyAndRecord(message, current.triage);
+    logger.info('TicketProcessed', { ticketId, messageId, urgency: current.triage.urgency, notifyOnly: true });
     return 'processed';
   }
   logger.info('DuplicateMessage', { ticketId, messageId, status: current.status });
@@ -194,12 +194,13 @@ function parseMessage(body: string): SupportTicketMessage {
   if (typeof ticket.id !== 'string' || typeof ticket.content !== 'string') {
     throw new PermanentError('Stream record has no ticket id or content');
   }
-  const flags = Array.isArray(ticket.guardrailFlags) ? ticket.guardrailFlags.map(String) : [];
+  const guardrailFlags = (ticket.guardrail as { flags?: unknown } | undefined)?.flags;
+  const flags = Array.isArray(guardrailFlags) ? guardrailFlags.map(String) : [];
   return { ticketId: ticket.id, content: ticket.content, flags };
 }
 
 // The parts of a stored ticket the duplicate check reads.
-type StoredTicket = Pick<SupportTicket, 'status' | 'notifiedAt'> & { analytics?: TicketTriage };
+type StoredTicket = Pick<SupportTicket, 'status' | 'notifiedAt' | 'triage'>;
 
 // Whether a guarded update was made. When it wasn't, `current` is the ticket as it is now,
 // or null when there's no such ticket.
@@ -234,7 +235,7 @@ async function saveTriage(ticketId: string, triage: TicketTriage, usage: LlmUsag
     Key: {
       id: ticketId,
     },
-    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, analytics = :analytics, #usage = :usage',
+    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, triage = :triage, #usage = :usage',
     ExpressionAttributeNames: {
       '#status': 'status',
       '#usage': 'usage',
@@ -242,7 +243,7 @@ async function saveTriage(ticketId: string, triage: TicketTriage, usage: LlmUsag
     ExpressionAttributeValues: {
       ':status': TicketStatus.PROCESSED,
       ':updatedAt': now,
-      ':analytics': {
+      ':triage': {
         ...triage,
         generatedAt: now,
       },

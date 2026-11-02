@@ -33,7 +33,7 @@ export interface Collected {
   outcome: Outcome;
   urgency?: string; // as stored, not validated: v0 may store anything
   response?: string;
-  processingMs?: number; // createdAt -> analytics.generatedAt
+  processingMs?: number; // createdAt -> triage.generatedAt
   usage?: TicketUsage; // from Step 2: what the model call used, as the pipeline recorded it
 }
 

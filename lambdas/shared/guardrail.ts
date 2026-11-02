@@ -31,6 +31,7 @@ export interface TicketCheck {
   content: string; // Masked: the only version of the ticket that may be stored or sent on
   flags: TicketFlag[];
   piiTypes: string[]; // The kinds of PII masked, never the values
+  version: string; // The guardrail version that checked it
 }
 
 // Checks one ticket. Errors are thrown as they are: without a check there is no masked text,
@@ -52,7 +53,12 @@ export async function checkTicket(content: string): Promise<TicketCheck> {
   if (piiTypes.length > 0 && masked === undefined) {
     throw new Error('Guardrail found PII but returned no masked text');
   }
-  return { content: masked ?? content, flags: detectedFlags(assessments), piiTypes };
+  return {
+    content: masked ?? content,
+    flags: detectedFlags(assessments),
+    piiTypes,
+    version: config.guardrailVersion,
+  };
 }
 
 function detectedFlags(assessments: GuardrailAssessment[]): TicketFlag[] {

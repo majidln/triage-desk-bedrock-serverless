@@ -70,7 +70,7 @@ Every step moves at least one of these. The steps refer to them by ID.
 | **SC-2** | Fast acknowledgement | `202` with a ticket ID in < 1 s (p95) | API Gateway latency |
 | **SC-3** | Accurate urgency | ≥ 90% accuracy, **≥ 95% recall on CRITICAL** | Evaluation set |
 | **SC-4** | Grounded, correct replies | ≥ 90% judged correct, **0 invented policies or promises** | Evaluation set, scored against a rubric |
-| **SC-5** | Processing latency | p95 < 30 s from submit to draft | `createdAt` → `analytics.generatedAt` |
+| **SC-5** | Processing latency | p95 < 30 s from submit to draft | `createdAt` → `triage.generatedAt` |
 | **SC-6** | Cost | < $0.01 per ticket, model plus infrastructure | Tokens logged per ticket × price |
 | **SC-7** | Safety | No PII in logs or notifications; injection tickets don't change behavior | Red-team tickets in the evaluation set; log review |
 | **SC-8** | Abuse resistance | Authenticated, throttled, input size bounded | API config; abuse tests |

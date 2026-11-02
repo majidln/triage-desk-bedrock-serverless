@@ -134,7 +134,7 @@ describe('support-request-receiver', () => {
     expect(JSON.stringify(put.Item)).not.toContain('4111');
   });
 
-  it('stores the flags with the ticket', async () => {
+  it("stores the guardrail's findings with the ticket", async () => {
     bedrockMock.on(ApplyGuardrailCommand).resolves({
       action: 'NONE',
       outputs: [],
@@ -147,7 +147,12 @@ describe('support-request-receiver', () => {
 
     expect(result.statusCode).toBe(202);
     const put = ddbMock.commandCalls(PutCommand)[0].args[0].input;
-    expect(put.Item?.guardrailFlags).toEqual(['PROMPT_ATTACK']);
+    expect(put.Item?.guardrail).toEqual({
+      flags: ['PROMPT_ATTACK'],
+      piiTypes: [],
+      version: '1',
+      checkedAt: put.Item?.createdAt,
+    });
   });
 
   it('returns 503 and stores nothing when the guardrail fails', async () => {

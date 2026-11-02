@@ -53,7 +53,7 @@ describe('list-support-tickets', () => {
   it('returns each ticket as the customer sees it, with the reply only once processed', async () => {
     ddbMock.on(QueryCommand).resolves({
       Items: [
-        storedTicket('t-2', { status: 'PROCESSED', analytics: { urgency: 'LOW', response: 'Click Invite.' } }),
+        storedTicket('t-2', { status: 'PROCESSED', triage: { urgency: 'LOW', response: 'Click Invite.' } }),
         storedTicket('t-1', { status: 'RECEIVED' }),
       ],
     });

@@ -310,7 +310,7 @@ Resources:
             ProjectionType: INCLUDE
             NonKeyAttributes:
               - status
-              - analytics
+              - triage
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true

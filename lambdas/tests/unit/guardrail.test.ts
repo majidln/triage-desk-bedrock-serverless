@@ -31,6 +31,7 @@ describe('checkTicket', () => {
       content: 'How do I export a board?',
       flags: [],
       piiTypes: [],
+      version: '1',
     });
   });
 
@@ -56,6 +57,7 @@ describe('checkTicket', () => {
       content: 'My card is {CREDIT_DEBIT_CARD_NUMBER}',
       flags: [],
       piiTypes: ['CREDIT_DEBIT_CARD_NUMBER'],
+      version: '1',
     });
     expect(JSON.stringify(check)).not.toContain('4111');
   });

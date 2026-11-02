@@ -18,10 +18,24 @@ export enum Urgency {
   CRITICAL = 'CRITICAL',
 }
 
-// The model's triage of a ticket. Stored in DynamoDB under the `analytics` attribute.
+// The model's triage of a ticket. Stored in DynamoDB under the `triage` attribute, with the
+// time it was made (StoredTriage).
 export interface TicketTriage {
   urgency: Urgency;
   response: string;
+}
+
+export interface StoredTriage extends TicketTriage {
+  generatedAt: string;
+}
+
+// What the guardrail found when the ticket arrived. Stored under the `guardrail` attribute.
+// `version` is the guardrail version that judged it, so a ticket shows which rules applied.
+export interface GuardrailResult {
+  flags: string[];
+  piiTypes: string[]; // The kinds of PII masked, never the values
+  version: string;
+  checkedAt: string;
 }
 
 // What one model call used. Stored in DynamoDB under the `usage` attribute. The counts are
@@ -48,19 +62,20 @@ export interface TicketFailure {
   failedAt: string;
 }
 
+// A stored ticket. Top-level: what identifies it and what we query on. Each nested map has one
+// writer and is written once: `guardrail` by the receiver, `triage` and `usage` (or `failure`)
+// by the processor.
 export interface SupportTicket {
   id: string;
-  content: string;
+  userId: string;
   status: TicketStatus;
   createdAt: string;
   updatedAt: string;
-  userId: string;
-  guardrailFlags?: string[];
-  urgency?: Urgency;
-  response?: string;
-  analyticsGeneratedAt?: string;
-  failure?: TicketFailure;
+  content: string; // Masked by the guardrail
+  guardrail?: GuardrailResult;
+  triage?: StoredTriage;
   usage?: LlmUsage;
+  failure?: TicketFailure;
   notifiedAt?: string;
 }
 

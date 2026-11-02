@@ -67,12 +67,12 @@ export const handler = async (
         TableName: config.tableName,
         Item: {
           id: ticketId,
-          content: check.content,
-          guardrailFlags: check.flags,
+          userId,
           status: TicketStatus.RECEIVED,
           createdAt: now,
           updatedAt: now,
-          userId,
+          content: check.content,
+          guardrail: { flags: check.flags, piiTypes: check.piiTypes, version: check.version, checkedAt: now },
         },
       }),
     );

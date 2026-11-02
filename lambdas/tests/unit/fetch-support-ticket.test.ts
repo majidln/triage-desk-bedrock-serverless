@@ -109,7 +109,7 @@ describe('fetch-support-ticket', () => {
     ddbMock.on(GetCommand).resolves({
       Item: storedTicket({
         status: 'PROCESSED',
-        analytics: { urgency: 'LOW', response: 'Open the board and click Invite.' },
+        triage: { urgency: 'LOW', response: 'Open the board and click Invite.' },
       }),
     });
 

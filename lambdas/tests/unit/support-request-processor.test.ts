@@ -33,10 +33,13 @@ function exampleRecord(n: number): SQSRecord {
 }
 
 // A stream record body for a new ticket, built from the example so it keeps the real shape.
-function ticketMessage(ticketId: string, content: string, guardrailFlags: string[] = []): string {
+function ticketMessage(ticketId: string, content: string, flags: string[] = []): string {
   const record = JSON.parse(sampleRecord().body);
   record.dynamodb.Keys = marshall({ id: ticketId });
-  record.dynamodb.NewImage = { ...record.dynamodb.NewImage, ...marshall({ id: ticketId, content, guardrailFlags }) };
+  record.dynamodb.NewImage = {
+    ...record.dynamodb.NewImage,
+    ...marshall({ id: ticketId, content, guardrail: { flags, piiTypes: [], version: '1' } }),
+  };
   return JSON.stringify(record);
 }
 
@@ -208,7 +211,7 @@ describe('support-request-processor', () => {
       await processRecord(exampleRecord(1));
 
       const [save] = guardedUpdates();
-      expect(save.ExpressionAttributeValues?.[':analytics']).toEqual({
+      expect(save.ExpressionAttributeValues?.[':triage']).toEqual({
         urgency: 'HIGH',
         response: 'Here is how.',
         generatedAt: expect.any(String),
@@ -307,7 +310,7 @@ describe('support-request-processor', () => {
         .on(UpdateCommand)
         .resolves({})
         .on(UpdateCommand, { ConditionExpression: '#status = :received' })
-        .rejects(alreadyMovedOn({ id: 'ticket-1', status: 'PROCESSED', analytics: saved }));
+        .rejects(alreadyMovedOn({ id: 'ticket-1', status: 'PROCESSED', triage: saved }));
 
       await expect(processRecord(exampleRecord(1))).resolves.toBe('processed');
 
@@ -378,7 +381,7 @@ describe('support-request-processor', () => {
       const [save] = guardedUpdates();
       expect(save.ExpressionAttributeValues).toMatchObject({
         ':status': 'PROCESSED',
-        ':analytics': { urgency: 'LOW', response: FLAGGED_REPLY },
+        ':triage': { urgency: 'LOW', response: FLAGGED_REPLY },
         ':usage': { modelId: 'none', inputTokens: 0, outputTokens: 0, costUsd: 0 },
       });
     });
