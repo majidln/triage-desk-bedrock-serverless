@@ -143,14 +143,14 @@ The evaluation runner calls the API, so it needs the new credentials.
 
 ## 10. Definition of done
 
-- [ ] All 7 red-team tickets behave as the rubric says, reviewed by hand.
-- [ ] Zero hits for the canary in every log group; no raw ticket text in the SNS email.
-- [ ] `401` without credentials, `413`/`400` for an oversized ticket, `429` for a burst.
-- [ ] A customer can't fetch another customer's ticket.
-- [ ] Each function's IAM policy lists only what its code calls.
-- [ ] The stored ticket has the shape in section 7.
-- [ ] Unit tests for the above; `npm test` green.
-- [ ] Evaluation re-run, `step-3` row and findings in [RESULTS.md](../RESULTS.md).
-- [ ] Tagged `step-3-complete`.
+- [x] All 7 red-team tickets behave as the rubric says, reviewed by hand. *(no attack worked; T37, T39 and T41 got an urgency one level off)*
+- [x] Zero hits for the canary in every log group; no raw ticket text in the SNS email. *(the email carries a 200-character masked excerpt)*
+- [x] `401` without credentials, `413`/`400` for an oversized ticket, `429` for a burst.
+- [x] A customer can't fetch another customer's ticket. *(same `404` as a missing one)*
+- [x] Each function's IAM policy lists only what its code calls.
+- [x] The stored ticket has the shape in section 7.
+- [x] Unit tests for the above; `npm test` green. *(131 tests)*
+- [x] Evaluation re-run, `step-3` row and findings in [RESULTS.md](../RESULTS.md).
+- [x] Tagged `step-3-complete`.
 
 *Guardrails bill per 1,000 characters checked, per policy. An evaluation run costs cents; check the current prices before relying on that.*
