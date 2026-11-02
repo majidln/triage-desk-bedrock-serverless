@@ -98,7 +98,25 @@ Zero results is the exit criterion. Run it once before your changes, so you know
 
 ---
 
-## 7. Tests
+## 7. The ticket's shape
+
+The stored ticket grew step by step. Tidy it before the evaluation, so the `step-3` run uses the final shape: top-level for what you query, one nested map per writer.
+
+```
+id, userId, status, createdAt, updatedAt, content, notifiedAt
+guardrail: { flags, piiTypes, version, checkedAt }
+triage:    { urgency, response, generatedAt }
+usage:     { modelId, inputTokens, outputTokens, costUsd }
+failure:   { errorName, message, failedAt }
+```
+
+- `analytics` becomes `triage`, and `guardrailFlags` becomes `guardrail.flags`.
+- Remove the unused top-level `urgency` and `response` from `SupportTicket`.
+- The `TicketsByUser` index projects `analytics`, so it has to change too. Changing a projection means recreating the index.
+
+---
+
+## 8. Tests
 
 In `lambdas/tests/unit/`:
 - Receiver: oversized content → `413`/`400`; `userId` taken from the authorizer, not the body.
@@ -109,7 +127,7 @@ In `lambdas/tests/unit/`:
 
 ---
 
-## 8. Suggested order
+## 9. Suggested order
 
 1. Prompt split and delimiters, and their tests
 2. Size limit, auth and throttling; deploy, then the `401`, `413` and burst proofs
@@ -123,13 +141,14 @@ The evaluation runner calls the API, so it needs the new credentials.
 
 ---
 
-## 9. Definition of done
+## 10. Definition of done
 
 - [ ] All 7 red-team tickets behave as the rubric says, reviewed by hand.
 - [ ] Zero hits for the canary in every log group; no raw ticket text in the SNS email.
 - [ ] `401` without credentials, `413`/`400` for an oversized ticket, `429` for a burst.
 - [ ] A customer can't fetch another customer's ticket.
 - [ ] Each function's IAM policy lists only what its code calls.
+- [ ] The stored ticket has the shape in section 7.
 - [ ] Unit tests for the above; `npm test` green.
 - [ ] Evaluation re-run, `step-3` row and findings in [RESULTS.md](../RESULTS.md).
 - [ ] Tagged `step-3-complete`.

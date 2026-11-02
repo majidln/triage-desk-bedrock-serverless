@@ -215,6 +215,7 @@ System prompt with the ticket clearly separated as data. A **Bedrock Guardrail**
 - [ ] Every red-team ticket in the evaluation set behaves correctly.
 - [ ] No ticket text or PII in any log group, checked with a Logs Insights query.
 - [ ] An unauthenticated request gets `401`; an oversized one gets `413`/`400`; a burst gets throttled.
+- [ ] The stored ticket has one nested map per writer (`guardrail`, `triage`, `usage`), before the evaluation run.
 - [ ] Evaluation re-run, `step-3` row.
 
 *Guardrails bill per text unit processed. Still cents per evaluation run.*
