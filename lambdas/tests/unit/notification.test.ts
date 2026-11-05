@@ -2,7 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { EXCERPT_LENGTH, notificationBody, notificationSubject } from '../../shared/notification';
 import { Urgency } from '../../shared/types';
 
-const triage = { urgency: Urgency.HIGH, response: 'The draft reply.' };
+const triage = { urgency: Urgency.HIGH, response: 'The draft reply.', sources: ['billing-guide.txt'] };
 
 describe('notificationSubject', () => {
   it('holds the urgency and ticket id, never ticket text', () => {

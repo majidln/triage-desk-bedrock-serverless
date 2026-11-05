@@ -7,6 +7,7 @@ import {
   ThrottlingException,
   ValidationException,
 } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockAgentRuntimeClient, RetrieveCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
@@ -18,7 +19,20 @@ import { logger } from '../../shared/logger';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 const bedrockMock = mockClient(BedrockRuntimeClient);
+const agentMock = mockClient(BedrockAgentRuntimeClient);
 const snsMock = mockClient(SNSClient);
+
+// What Retrieve finds for every ticket unless a test says otherwise: one chunk, cited as id "1"
+const RETRIEVED_TEXT = 'Invite teammates by email under Settings → Members.';
+const retrieved = {
+  retrievalResults: [
+    {
+      content: { text: RETRIEVED_TEXT },
+      location: { type: 'S3' as const, s3Location: { uri: 's3://docs-bucket/help-center/accounts-and-security.txt' } },
+      score: 0.71,
+    },
+  ],
+};
 
 // The example record used with `sam local invoke`: one SQS message holding one DynamoDB
 // stream record, as the intake pipe sends it.
@@ -100,8 +114,12 @@ describe('support-request-processor', () => {
   beforeEach(() => {
     ddbMock.reset();
     bedrockMock.reset();
+    agentMock.reset();
     snsMock.reset();
-    bedrockMock.on(ConverseCommand).resolves(converseTool({ urgency: 'HIGH', response: 'Here is how.' }));
+    agentMock.on(RetrieveCommand).resolves(retrieved);
+    bedrockMock
+      .on(ConverseCommand)
+      .resolves(converseTool({ urgency: 'HIGH', response: 'Here is how.', sources: ['1'] }));
   });
 
   it('reports only the failed record in a batch of 3, and finishes the others once', async () => {
@@ -178,6 +196,30 @@ describe('support-request-processor', () => {
     });
   });
 
+  it('retries a transient Retrieve error without calling the model, writing or notifying', async () => {
+    agentMock.on(RetrieveCommand).rejects(new ThrottlingException(sdkError));
+
+    const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
+
+    expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-1' }] });
+    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(0);
+    expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+    expect(snsMock.commandCalls(PublishCommand)).toHaveLength(0);
+  });
+
+  it('marks the ticket FAILED on a permanent Retrieve error, without calling the model', async () => {
+    agentMock.on(RetrieveCommand).rejects(new ValidationException(sdkError));
+    ddbMock.on(UpdateCommand).resolves({});
+
+    const result = await handler({ Records: [exampleRecord(1)] }, lambdaContext);
+
+    expect(result).toEqual({ batchItemFailures: [] });
+    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(0);
+    const values = ddbMock.commandCalls(UpdateCommand)[0].args[0].input.ExpressionAttributeValues;
+    expect(values?.[':status']).toBe('FAILED');
+    expect(values?.[':failure']).toMatchObject({ errorName: 'ValidationException' });
+  });
+
   it('retries when marking the ticket FAILED itself fails', async () => {
     bedrockMock.on(ConverseCommand).rejects(new ValidationException(sdkError));
     ddbMock.on(UpdateCommand).rejects(new Error('DynamoDB unavailable'));
@@ -214,6 +256,7 @@ describe('support-request-processor', () => {
       expect(save.ExpressionAttributeValues?.[':triage']).toEqual({
         urgency: 'HIGH',
         response: 'Here is how.',
+        sources: ['accounts-and-security.txt'],
         generatedAt: expect.any(String),
       });
       expect(save.ExpressionAttributeValues?.[':usage']).toEqual({
@@ -278,6 +321,7 @@ describe('support-request-processor', () => {
     expect(logged).toContain('ticket-1');
     expect(logged).not.toContain('hunter2');
     expect(logged).not.toContain(reply);
+    expect(logged).not.toContain(RETRIEVED_TEXT);
     [...spies, consoleSpy].forEach((spy) => spy.mockRestore());
   });
 
@@ -350,10 +394,10 @@ describe('support-request-processor', () => {
       expect(snsMock.commandCalls(PublishCommand)).toHaveLength(1);
     });
 
-    it('starts a ticket with exactly the worst-case budget left (35 s)', async () => {
+    it('starts a ticket with exactly the worst-case budget left (45 s)', async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const result = await handler({ Records: [exampleRecord(1)] }, contextWithRemaining(35_000));
+      const result = await handler({ Records: [exampleRecord(1)] }, contextWithRemaining(45_000));
 
       expect(result).toEqual({ batchItemFailures: [] });
     });
@@ -371,6 +415,7 @@ describe('support-request-processor', () => {
       await expect(processRecord(flagged())).resolves.toBe('processed');
 
       expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(0);
+      expect(agentMock.commandCalls(RetrieveCommand)).toHaveLength(0);
     });
 
     it('is saved as a LOW PROCESSED ticket with the fixed reply and no cost', async () => {
@@ -381,7 +426,7 @@ describe('support-request-processor', () => {
       const [save] = guardedUpdates();
       expect(save.ExpressionAttributeValues).toMatchObject({
         ':status': 'PROCESSED',
-        ':triage': { urgency: 'LOW', response: FLAGGED_REPLY },
+        ':triage': { urgency: 'LOW', response: FLAGGED_REPLY, sources: [] },
         ':usage': { modelId: 'none', inputTokens: 0, outputTokens: 0, costUsd: 0 },
       });
     });
@@ -404,6 +449,58 @@ describe('support-request-processor', () => {
     });
   });
 
+  describe('grounding the reply in the Knowledge Base', () => {
+    it('searches the configured Knowledge Base with the ticket', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await processRecord(sampleRecord());
+
+      const input = agentMock.commandCalls(RetrieveCommand)[0].args[0].input;
+      expect(input.knowledgeBaseId).toBe('test-knowledge-base');
+      expect(input.retrievalQuery?.text).toBe('How do I invite a teammate to my board?');
+    });
+
+    it('gives the model the retrieved chunks before the ticket', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await processRecord(sampleRecord());
+
+      const content = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.messages?.[0].content;
+      expect(content?.[0].text).toContain('<document id="1" source="accounts-and-security.txt">');
+      expect(content?.[0].text).toContain(RETRIEVED_TEXT);
+      expect(content?.[1].text).toContain('<ticket>');
+    });
+
+    it('still asks the model, telling it there are no documents, when nothing is found', async () => {
+      agentMock.on(RetrieveCommand).resolves({ retrievalResults: [] });
+      bedrockMock.on(ConverseCommand).resolves(converseTool({ urgency: 'LOW', response: 'An agent will follow up.' }));
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await expect(processRecord(sampleRecord())).resolves.toBe('processed');
+
+      const content = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.messages?.[0].content;
+      expect(content?.[0].text).toContain('No documents were found');
+      const [save] = guardedUpdates();
+      expect(save.ExpressionAttributeValues?.[':triage']).toMatchObject({ sources: [] });
+    });
+
+    it('logs which documents were found and used, by file name', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+      const info = jest.spyOn(logger, 'info');
+
+      await processRecord(sampleRecord());
+
+      expect(info).toHaveBeenCalledWith(
+        'TicketProcessed',
+        expect.objectContaining({
+          retrievedSources: ['accounts-and-security.txt'],
+          sources: ['accounts-and-security.txt'],
+        }),
+      );
+      info.mockRestore();
+    });
+  });
+
   describe('reading the stream record', () => {
     it('processes the example event as the intake pipe sends it', async () => {
       ddbMock.on(UpdateCommand).resolves({});
@@ -413,7 +510,7 @@ describe('support-request-processor', () => {
       const [save] = guardedUpdates();
       expect(save.Key).toEqual({ id: '11111111-2222-3333-4444-555555555555' });
       const { messages, system, toolConfig } = bedrockMock.commandCalls(ConverseCommand)[0].args[0].input;
-      expect(messages?.[0].content?.[0].text).toBe('<ticket>\nHow do I invite a teammate to my board?\n</ticket>');
+      expect(messages?.[0].content?.[1].text).toBe('<ticket>\nHow do I invite a teammate to my board?\n</ticket>');
       // The ticket is never part of our instructions
       expect(system?.[0].text).not.toContain('How do I invite a teammate');
       expect(toolConfig?.toolChoice).toEqual({ tool: { name: 'record_triage' } });

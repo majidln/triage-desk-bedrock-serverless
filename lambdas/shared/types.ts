@@ -23,6 +23,7 @@ export enum Urgency {
 export interface TicketTriage {
   urgency: Urgency;
   response: string;
+  sources: string[]; // The documents the reply relies on, by file name: only ones that were retrieved
 }
 
 export interface StoredTriage extends TicketTriage {
@@ -102,4 +103,12 @@ export interface TicketView {
 export interface ListTicketsResponse {
   tickets: TicketView[];
   nextToken?: string;
+}
+
+// One chunk of Flowboard's documents that Retrieve found for a ticket (see shared/knowledge.ts).
+export interface RetrievedChunk {
+  id: string;
+  source: string;
+  text: string;
+  score: number;
 }
