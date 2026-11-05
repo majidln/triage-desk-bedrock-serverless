@@ -204,6 +204,12 @@ Resources:
                 - bedrock:InvokeModel
               Resource:
                 - !Sub 'arn:aws:bedrock:*::foundation-model/${ModelId}'
+            # Find the chunks of Flowboard's documents that match a ticket. Nothing on S3 or
+            # S3 Vectors: Bedrock reads the index with the Knowledge Base's own role.
+            - Effect: Allow
+              Action:
+                - bedrock:Retrieve
+              Resource: !GetAtt KnowledgeBase.KnowledgeBaseArn
       LoggingConfig:
         LogGroup: !Ref ProcessorLogGroup
       Environment:
@@ -211,6 +217,7 @@ Resources:
           BEDROCK_MODEL_ID: !Ref ModelId
           SNS_TOPIC_ARN: !GetAtt SupportTicketNotificationTopic.TopicArn
           POWERTOOLS_SERVICE_NAME: triage-processor
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBase
     Metadata:
       BuildMethod: esbuild
       BuildProperties:

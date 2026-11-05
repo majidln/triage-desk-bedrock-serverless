@@ -9,6 +9,7 @@ import {
   TicketTriage,
   TicketFailure,
   LlmUsage,
+  RetrievedChunk,
   TriageResult,
   Urgency,
 } from '../shared/types';
@@ -16,6 +17,7 @@ import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { requireEnv } from '../shared/env';
 import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
+import { retrieveChunks, RETRIEVE_ATTEMPT_TIMEOUT_MS, RETRIEVE_MAX_ATTEMPTS } from '../shared/knowledge';
 import { logger } from '../shared/logger';
 import { notificationBody, notificationSubject } from '../shared/notification';
 import { priceFor } from '../shared/model-prices';
@@ -25,6 +27,7 @@ const config = {
   tableName: requireEnv('SUPPORT_TICKETS_TABLE'),
   topicArn: requireEnv('SNS_TOPIC_ARN'),
   modelId: requireEnv('BEDROCK_MODEL_ID'),
+  knowledgeBaseId: requireEnv('KNOWLEDGE_BASE_ID'),
 };
 
 // Any model can be deployed; one without a price still triages tickets, they just have no
@@ -33,9 +36,11 @@ if (priceFor(config.modelId) === undefined) {
   logger.warn('ModelPriceMissing', { modelId: config.modelId });
 }
 
-// The longest one ticket can take: every model attempt timing out, plus a few seconds for
-// the SDK's backoff, DynamoDB and SNS. A ticket is only started with at least this much left.
-const TICKET_BUDGET_MS = MODEL_ATTEMPT_TIMEOUT_MS * MODEL_MAX_ATTEMPTS + 5_000;
+// The longest one ticket can take: every Retrieve and model attempt timing out, plus a few
+// seconds for the SDK's backoff, DynamoDB and SNS. A ticket is only started with at least this
+// much left.
+const TICKET_BUDGET_MS =
+  RETRIEVE_ATTEMPT_TIMEOUT_MS * RETRIEVE_MAX_ATTEMPTS + MODEL_ATTEMPT_TIMEOUT_MS * MODEL_MAX_ATTEMPTS + 5_000;
 
 const ddClient = new DynamoDBClient({});
 // A token count Bedrock didn't report is undefined; it's left out of the item rather than
@@ -89,7 +94,7 @@ export const FLAGGED_REPLY =
 // decision, not a failure: FAILED would fire the error alarm on every injection attempt.
 function flaggedTriage(): TriageResult {
   return {
-    triage: { urgency: Urgency.LOW, response: FLAGGED_REPLY },
+    triage: { urgency: Urgency.LOW, response: FLAGGED_REPLY, sources: [] },
     usage: { modelId: 'none', inputTokens: 0, outputTokens: 0, costUsd: 0 },
   };
 }
@@ -110,12 +115,19 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
   }
   const { ticketId } = message;
 
-  // Only the Bedrock call is classified: DynamoDB and SNS errors below are always retried
-  // (DynamoDB also has a ValidationException, which isn't Bedrock's permanent one).
-  // There's no fallback answer: a transient error is retried, a permanent one marks the ticket FAILED.
+  // Only the Bedrock calls are classified, Retrieve and the model alike: DynamoDB and SNS errors
+  // below are always retried (DynamoDB also has a ValidationException, which isn't Bedrock's
+  // permanent one). There's no fallback answer: a transient error is retried, a permanent one
+  // marks the ticket FAILED. A flagged ticket skips both calls, so its text isn't searched either.
+  let chunks: RetrievedChunk[] = [];
   let result: TriageResult;
   try {
-    result = message.flags.length > 0 ? flaggedTriage() : await invokeTriageModel(message.content, config.modelId);
+    if (message.flags.length > 0) {
+      result = flaggedTriage();
+    } else {
+      chunks = await retrieveChunks(message.content, config.knowledgeBaseId);
+      result = await invokeTriageModel(message.content, config.modelId, chunks);
+    }
   } catch (err) {
     if (classifyError(err) === 'transient') {
       throw err;
@@ -141,6 +153,9 @@ export async function processRecord(record: SQSRecord): Promise<Outcome> {
     messageId,
     urgency: triage.urgency,
     flags: message.flags,
+    // File names only, never the chunks' text: which documents were found and which were used
+    retrievedSources: chunks.map((chunk) => chunk.source),
+    sources: triage.sources,
     modelId: usage.modelId,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
