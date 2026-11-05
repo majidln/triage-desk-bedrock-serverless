@@ -129,12 +129,12 @@ In `lambdas/tests/unit/`:
 
 ## 10. Definition of done
 
-- [ ] Every draft cites the documents it used, and only retrieved ones.
-- [ ] Zero invented policies on the evaluation set, reviewed by hand (SC-4).
-- [ ] Two chunking strategies compared: retrieval check and evaluation for each.
-- [ ] Unit tests for the above; `npm test` green.
-- [ ] Evaluation re-run, `step-4` row and findings in [RESULTS.md](../RESULTS.md).
-- [ ] Vector store decision recorded in PLANNING.md §6.
+- [x] Every draft cites the documents it used, and only retrieved ones. *(39 of 40 model replies; ids that weren't retrieved are dropped)*
+- [ ] Zero invented policies on the evaluation set, reviewed by hand (SC-4). *(3 of 42, down from 9 in v0: T16, T29, T35. Moved to Step 5)*
+- [x] Two chunking strategies compared: retrieval check and evaluation for each. *(fixed 300: 81% of facts found; hierarchical 600/150: 94%)*
+- [x] Unit tests for the above; `npm test` green. *(159 tests)*
+- [x] Evaluation re-run, `step-4` row and findings in [RESULTS.md](../RESULTS.md).
+- [x] Vector store decision recorded in PLANNING.md §6. *(S3 Vectors)*
 - [ ] Tagged `step-4-complete`.
 
 *Embedding the documents costs fractions of a cent. Retrieval adds input tokens to every ticket, so check cost per ticket against SC-6.*

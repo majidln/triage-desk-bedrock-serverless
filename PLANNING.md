@@ -17,7 +17,7 @@ Out of scope: email or chat intake, languages other than English, CRM integratio
 | 1 | Reliability | Done | `step-1-complete` | Free |
 | 2 | Structured output with the Converse API | Done | `step-2-complete` | Free |
 | 3 | Guardrails and security | Done | `step-3-complete` | Free (Guardrails bill per request) |
-| 4 | Grounding with a Knowledge Base | Not started | | Depends on the vector store |
+| 4 | Grounding with a Knowledge Base | Done (SC-4 not met, see Step 5) | `step-4-complete` | S3 Vectors storage only, cents |
 | 5 | Model comparison | Not started | | Free |
 | 6 | Human in the loop | Optional, not started | | |
 
@@ -228,10 +228,12 @@ Write the Flowboard help center and policy docs (fictional, in the repo). Put th
 **The real lesson: what retrieval returns decides answer quality more than the model does.** Try at least two chunking strategies and measure both. See [STEP-4-GUIDE.md](docs/STEP-4-GUIDE.md).
 
 **Exit:**
-- [ ] Every draft cites the documents it used.
-- [ ] Zero invented policies on the evaluation set (SC-4).
-- [ ] Results for the chunking strategies compared.
-- [ ] Evaluation re-run, `step-4` row.
+- [x] Every draft cites the documents it used. *(39 of 40 model replies; only retrieved ids are kept, as file names in `triage.sources`)*
+- [ ] Zero invented policies on the evaluation set (SC-4). *(not met: 3 invented, down from v0's 9. The right documents reached the model and it misread them (T29, T35), so this moves to Step 5's model comparison)*
+- [x] Results for the chunking strategies compared. *(retrieval check: fixed 300 tokens found 81% of the needed facts, hierarchical 94%; hierarchical kept)*
+- [x] Evaluation re-run, `step-4` row. *(25/42, CRITICAL 5/8, 18/42 replies correct, $0.000148 per ticket)*
+
+*The lesson held only partly: once retrieval found 94% of the facts, better retrieval stopped improving the replies, and the model became the limit (RESULTS.md, Step 4 finding 2).*
 
 *The first thing that can bill at rest. Choose the vector store on cost (see §6) and tear it down after each session if it bills hourly.*
 
@@ -268,7 +270,7 @@ Deploy → verify the exit criteria by hand → run the evaluation and record nu
 | Stack / resource | Rule |
 |---|---|
 | Main application | Leave running |
-| Knowledge Base vector store (Step 4) | **Delete before ending the session** if it bills hourly |
+| Knowledge Base vector store (Step 4) | Leave running: S3 Vectors bills for storage, cents, with no hourly minimum |
 | Evaluation runs | Run on purpose, not on every deploy. Each one costs money |
 
 ---
@@ -277,7 +279,7 @@ Deploy → verify the exit criteria by hand → run the evaluation and record nu
 
 | Question | Recommendation | Decision |
 |---|---|---|
-| Vector store for the Knowledge Base (Step 4) | S3 Vectors or Aurora Serverless pgvector, not OpenSearch Serverless, which has a high hourly minimum | Open |
+| Vector store for the Knowledge Base (Step 4) | S3 Vectors or Aurora Serverless pgvector, not OpenSearch Serverless, which has a high hourly minimum | S3 Vectors: storage only, nothing to run, and native Knowledge Base support. Upload guides as `.txt` (RESULTS.md, Step 4 finding 1) |
 | Auth for the public API (Step 3) | A JWT authorizer on the HTTP API, with Cognito or Auth0 as the issuer. API keys and usage plans need a REST API | Auth0, through the HTTP API's JWT authorizer |
 | Judge model for reply quality (Step 5) | A stronger model than the one being judged, checked against hand labels | Open |
 | Auto-send vs. human-approved replies (Step 6) | Human approval for CRITICAL and policy topics | Open |
