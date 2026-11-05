@@ -12,6 +12,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.1162.0",
     "@aws-sdk/client-cloudwatch": "^3.1155.0",
     "@aws-sdk/client-dynamodb": "^3.1155.0",
     "@aws-sdk/lib-dynamodb": "^3.1155.0"

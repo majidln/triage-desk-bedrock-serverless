@@ -451,7 +451,7 @@ Resources:
       KnowledgeBaseId: !Ref KnowledgeBase
       # The strategy is in the name: two data sources in one Knowledge Base can't share a name,
       # and CloudFormation creates the replacement before deleting the old one
-      Name: flowboard-docs-fixed-300
+      Name: flowboard-docs-hierarchical
       # Deleting this data source also deletes its vectors from the index
       DataDeletionPolicy: DELETE
       DataSourceConfiguration:
@@ -460,15 +460,21 @@ Resources:
           # The whole bucket: scripts/sync-knowledge.sh puts only help-center/ and internal/
           # there. InclusionPrefixes takes a single prefix, so it can't name both folders.
           BucketArn: !GetAtt KnowledgeDocsBucket.Arn
+      # Small child chunks are what the ticket is matched against: a short chunk has a sharp
+      # vector. Retrieve returns each match's parent instead, so the model gets the rule with
+      # its context. The fixed 300-token strategy it replaced is compared in RESULTS.md.
       VectorIngestionConfiguration:
         ChunkingConfiguration:
-          ChunkingStrategy: FIXED_SIZE
-          FixedSizeChunkingConfiguration:
-            # About a third of the longest guide, so most guides become 3–4 chunks
-            MaxTokens: 300
-            # Each chunk repeats the last 20% of the one before, so a sentence on a cut
+          ChunkingStrategy: HIERARCHICAL
+          HierarchicalChunkingConfiguration:
+            LevelConfigurations:
+              # Parent: about half of the longest guide, so a guide splits into 2–3 parents
+              - MaxTokens: 600
+              # Child: a paragraph or two, close to one topic each
+              - MaxTokens: 150
+            # Children in the same parent repeat this many tokens, so a sentence on a cut
             # is whole in at least one of them
-            OverlapPercentage: 20
+            OverlapTokens: 30
 
   SupportRequestQueue:
     Type: AWS::SQS::Queue
