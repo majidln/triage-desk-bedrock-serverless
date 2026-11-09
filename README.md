@@ -8,7 +8,7 @@ A serverless AWS pipeline that triages customer support tickets with an LLM: it 
 
 When companies started adopting AI, one of the first things I saw them move to an AI assistant was customer support. It's a natural fit: lots of repetitive questions, answers that already exist in the docs, and a real cost when urgent issues get buried.
 
-So I decided to build that flow myself, as a way to grow as an AI engineer. I didn't stop at a demo that calls a model. I wanted to work through the problems that show up in production: lost tickets, unstructured model output, prompt injection, invented policies, and the question of whether a model is good enough at all. I measured each change against an evaluation set.
+So I decided to build that flow myself, to grow my AI knowledge. I didn't stop at a demo that calls a model. I wanted to work through the problems that show up in production: lost tickets, unstructured model output, prompt injection, invented policies, and the question of whether a model is good enough at all. I measured each change against an evaluation set.
 
 ## Contents
 
@@ -37,31 +37,31 @@ Triage Desk accepts every ticket, sorts it by urgency, drafts a reply from Flowb
 
 ### Requirements
 
-What the system has to do, and how well it has to do it.
+**Functional**
 
-#### Functional
-
-| Stage | Requirement |
-|---|---|
-| Intake | Submit a ticket and get a ticket ID back right away |
-| Intake | Only authenticated clients can call the API |
-| Processing | Classify the ticket's urgency |
-| Processing | Draft a reply grounded in the company's documentation |
-| Output | Notify the support team, and alert them immediately on critical tickets |
-| Output | Fetch a ticket's status and its reply |
-
-#### Non-functional
-
-| Area | Requirement | Target |
+| Area | Requirement | Built in |
 |---|---|---|
-| Reliability | No lost tickets | 100% of accepted tickets end up processed or explicitly failed |
-| Reliability | Burst handling | Spikes of 3–5× are queued, not dropped |
-| Performance | Fast acknowledgement | `202` in under 1 s (p95) |
-| Performance | Processing latency | Draft ready in under 30 s (p95) |
-| AI quality | Accurate urgency | ≥ 90% accuracy, ≥ 95% recall on critical tickets |
-| AI quality | Grounded replies | No invented policies or promises |
-| Cost | Cost per ticket | Under $0.01, model plus infrastructure |
-| Safety | PII and prompt injection | No PII in logs or notifications; prompt injection doesn't change behavior |
+| Intake | Submit a ticket and get a ticket ID back right away | [1. Intake](#1-intake) |
+| Intake | Only authenticated clients can call the API | [1. Intake](#1-intake) |
+| Intake | Fetch a ticket's status and its reply | [1. Intake](#1-intake) |
+| AI triage | Classify the ticket's urgency | [3. The AI pipeline](#3-the-ai-pipeline) |
+| AI triage | Draft a reply grounded in the company's documentation | [3. The AI pipeline](#3-the-ai-pipeline) |
+| Team | Notify the support team, and alert them immediately on critical tickets | [4. Notifications and monitoring](#4-notifications-and-monitoring) |
+
+**Non-functional**
+
+| Quality | Requirement | Target | Built in |
+|---|---|---|---|
+| Reliability | No lost tickets | 100% of accepted tickets end up processed or explicitly failed | [2. Async pipeline](#2-async-pipeline) |
+| Reliability | Burst handling | Spikes of 3–5× are queued, not dropped | [2. Async pipeline](#2-async-pipeline) |
+| Performance | Fast acknowledgement | `202` in under 1 s (p95) | [1. Intake](#1-intake) |
+| Performance | Processing latency | Draft ready in under 30 s (p95) | [2. Async pipeline](#2-async-pipeline) |
+| AI quality | Accurate urgency | ≥ 90% accuracy, ≥ 95% recall on critical tickets | [3. The AI pipeline](#3-the-ai-pipeline) |
+| AI quality | Grounded replies | No invented policies or promises | [3. The AI pipeline](#3-the-ai-pipeline) |
+| Security | Safety | No PII in logs or notifications; prompt injection doesn't change behavior | [1. Intake](#1-intake), [3. The AI pipeline](#3-the-ai-pipeline) |
+| Cost | Cost per ticket | Under $0.01, model plus infrastructure | [5. Evaluation](#5-evaluation) |
+
+How each target is measured, and whether it's met, is in [5. Evaluation](#5-evaluation).
 
 The full problem statement and success criteria are in [PLANNING.md](PLANNING.md).
 
