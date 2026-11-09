@@ -37,26 +37,31 @@ Triage Desk accepts every ticket, sorts it by urgency, drafts a reply from Flowb
 
 ### Requirements
 
-**Functional**
-- Submit a ticket and get a ticket ID back right away
-- Classify the ticket's urgency
-- Draft a reply grounded in the company's documentation
-- Notify the support team, and alert them immediately on critical tickets
-- Fetch a ticket's status and its reply
-- Only authenticated clients can call the API
+What the system has to do, and how well it has to do it.
 
-**Non-functional**
+#### Functional
 
-| Requirement | Target |
+| Stage | Requirement |
 |---|---|
-| No lost tickets | 100% of accepted tickets end up processed or explicitly failed |
-| Burst handling | Spikes of 3–5× are queued, not dropped |
-| Fast acknowledgement | `202` in under 1 s (p95) |
-| Processing latency | Draft ready in under 30 s (p95) |
-| Accurate urgency | ≥ 90% accuracy, ≥ 95% recall on critical tickets |
-| Grounded replies | No invented policies or promises |
-| Cost | Under $0.01 per ticket, model plus infrastructure |
-| Safety | No PII in logs or notifications; prompt injection doesn't change behavior |
+| Intake | Submit a ticket and get a ticket ID back right away |
+| Intake | Only authenticated clients can call the API |
+| Processing | Classify the ticket's urgency |
+| Processing | Draft a reply grounded in the company's documentation |
+| Output | Notify the support team, and alert them immediately on critical tickets |
+| Output | Fetch a ticket's status and its reply |
+
+#### Non-functional
+
+| Area | Requirement | Target |
+|---|---|---|
+| Reliability | No lost tickets | 100% of accepted tickets end up processed or explicitly failed |
+| Reliability | Burst handling | Spikes of 3–5× are queued, not dropped |
+| Performance | Fast acknowledgement | `202` in under 1 s (p95) |
+| Performance | Processing latency | Draft ready in under 30 s (p95) |
+| AI quality | Accurate urgency | ≥ 90% accuracy, ≥ 95% recall on critical tickets |
+| AI quality | Grounded replies | No invented policies or promises |
+| Cost | Cost per ticket | Under $0.01, model plus infrastructure |
+| Safety | PII and prompt injection | No PII in logs or notifications; prompt injection doesn't change behavior |
 
 The full problem statement and success criteria are in [PLANNING.md](PLANNING.md).
 
