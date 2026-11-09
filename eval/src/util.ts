@@ -20,3 +20,4 @@ export function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[
 // Display formats.
 export const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 export const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+export const money = (usd: number | undefined) => (usd === undefined ? 'unknown' : `$${usd.toFixed(6)}`);

@@ -26,7 +26,8 @@ export interface Submission {
 //   fallback       v0 stored its canned reply because Bedrock failed (gap G1)
 //   timeout        not PROCESSED before the deadline
 //   not-submitted  part 1 never got a ticket id
-export type Outcome = 'processed' | 'fallback' | 'timeout' | 'not-submitted';
+// failed: the pipeline gave up on the ticket (status FAILED, Step 1 on), e.g. the model's answer was unusable.
+export type Outcome = 'processed' | 'fallback' | 'failed' | 'timeout' | 'not-submitted';
 
 export interface Collected {
   submission: Submission;

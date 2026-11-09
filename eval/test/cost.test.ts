@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ticketCost, ticketCostPerTicket } from '../src/cost.ts';
+import { runModelId, ticketCost, ticketCostPerTicket } from '../src/cost.ts';
 import type { Collected, TicketUsage } from '../src/types.ts';
 
 function withUsage(usage?: TicketUsage): Collected {
@@ -41,4 +41,22 @@ test('tickets from before Step 2 have no usage: no ticket cost at all', () => {
 
   assert.equal(cost.withUsage, 0);
   assert.equal(ticketCostPerTicket(cost), undefined);
+});
+
+test('the run model comes from the tickets; flagged tickets ("none") are ignored', () => {
+  const run = [
+    withUsage({ modelId: 'amazon.nova-pro-v1:0' }),
+    withUsage({ modelId: 'none' }),
+    withUsage({ modelId: 'amazon.nova-pro-v1:0' }),
+  ];
+  assert.equal(runModelId(run), 'amazon.nova-pro-v1:0');
+});
+
+test('no ticket recorded a model: the default', () => {
+  assert.equal(runModelId([withUsage(), withUsage({ modelId: 'none' })]), 'amazon.nova-lite-v1:0');
+});
+
+test('two models in one run: stop rather than mix them', () => {
+  const run = [withUsage({ modelId: 'amazon.nova-lite-v1:0' }), withUsage({ modelId: 'amazon.nova-pro-v1:0' })];
+  assert.throws(() => runModelId(run), /more than one model/);
 });
