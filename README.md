@@ -21,7 +21,6 @@ So I decided to build that flow myself, to grow my AI knowledge. I didn't stop a
   - [3. The AI pipeline](#3-the-ai-pipeline)
   - [4. Notifications and monitoring](#4-notifications-and-monitoring)
   - [5. Evaluation](#5-evaluation)
-  - [AWS Resources](#aws-resources)
 - [Deployment](#deployment)
 - [Local Development](#local-development)
 - [Project Structure](#project-structure)
@@ -620,8 +619,8 @@ The same 42 tickets and the same prompt and pipeline, with the `ModelId` deploy 
 | Submit → draft, p50 / p95 | **11.1 s** / **20.2 s** | 9.2 s / 27.7 s |
 | Tickets that timed out | 0 | 1 |
 | Model cost per ticket | **$0.00015** | $0.00106 |
-| Replies judged correct by hand | 18/42 | not reviewed yet |
-| Invented policies | 3/42 | not reviewed yet |
+| Replies judged correct | 18/42 | 18/41 |
+| Invented policies or promises | 3/42 | **5/41** |
 
 Both models also pay the Guardrail's ~$0.0004 per ticket on top.
 
@@ -629,10 +628,11 @@ What the numbers say:
 - **A bigger model helps most where it matters.** CRITICAL recall rose from 5/8 to 7/8, and urgency accuracy by about 10 points.
 - **It's still short of the targets** (≥ 90% accuracy, ≥ 95% CRITICAL recall). The model was one of the limits, but not the only one.
 - **It costs about 7 times more per ticket**, and is slower at p95. Cost is still far inside the budget (< $0.01 per ticket), but the margin on latency is thin: 27.7 s against the 30 s target.
+- **A bigger model didn't make replies more correct.** Both got 18 replies fully right. Mistral fixed the two policies Nova Lite misread (the pro-rata refund and the plan limits), but it invented more: it promised a fix or callback "within the hour" on 3 tickets, assumed a Business plan the ticket never mentioned, and claimed to have locked an account. Grounding stops a model inventing facts; it doesn't stop it making promises.
 - **Safety didn't depend on the model.** No attack worked with either, because the Guardrail and the prompt are doing that job.
 - **Mistral's runs vary more.** The first run had 6 tickets that didn't finish within the runner's 3-minute wait, the second had 1, so accuracy over all 42 tickets was 61.9% and then 69.0%. On answered tickets it was steady (72.2% and 70.7%). The table uses the second run, and the first is in [eval/reports/](eval/reports/).
 
-The tickets are few, so differences of one or two tickets are within noise, and a model comparison on 8 CRITICAL tickets moves in steps of 12.5 points. Reply quality for Mistral still needs the manual review.
+The tickets are few, so differences of one or two tickets are within noise, and a model comparison on 8 CRITICAL tickets moves in steps of 12.5 points. Nova Lite's replies were reviewed by hand. Mistral's were reviewed against the same facts sheet and standard by an AI assistant, not yet spot-checked by hand ([review](eval/reports/2026-11-05T140406-step-5-mistral-large-3-review.md)); the ticket that timed out isn't judged.
 
 #### Running it
 
@@ -662,16 +662,6 @@ It takes a few minutes: about a minute to submit and collect, then a wait for th
 - `<time>-<label>-review.md`: every reply with a blank verdict, for the manual review. Created once and then yours to edit
 
 Commit before a real run: the report records the commit, and warns when there are uncommitted changes.
-
-### AWS Resources
-
-- **API Gateway**: HTTP API with endpoints for creating and fetching support tickets
-- **Lambda Functions**: Three functions for receiving, fetching, and processing tickets
-- **DynamoDB**: Ticket storage with server-side encryption, and a stream of changes
-- **EventBridge Pipes**: Moves new tickets from the stream to the queue, with its own dead-letter queue
-- **SQS**: Queue with dead-letter queue for reliable processing
-- **SNS**: Topics for ticket notifications and error alerts
-- **CloudWatch**: Log groups, metric filters, and alarms for monitoring and alerting
 
 ## Deployment
 

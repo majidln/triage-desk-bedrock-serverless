@@ -243,7 +243,7 @@ Every choice so far used one model. Is a bigger one worth it, and would a smalle
 Run the evaluation set across Nova Lite, Mistral Large 3 and Claude Haiku. Add an LLM-as-judge for reply quality and spot-check it by hand. See [STEP-5-GUIDE.md](docs/STEP-5-GUIDE.md).
 
 **Exit:**
-- [ ] A table of accuracy, CRITICAL recall, reply quality, p95 latency and cost per ticket for each model. *(Nova Lite and Mistral Large 3 have accuracy, recall, latency and cost, in the README; reply quality is not reviewed for Mistral, and Haiku has not been run)*
+- [ ] A table of accuracy, CRITICAL recall, reply quality, p95 latency and cost per ticket for each model. *(Nova Lite and Mistral Large 3 have accuracy, recall, latency and cost, in the README; Mistral's replies are reviewed against the facts sheet by an AI assistant, not yet spot-checked by hand; Haiku has not been run)*
 - [ ] A model chosen in writing, with the reason.
 - [ ] `step-5` row. *(the row in RESULTS.md is still empty)*
 
