@@ -18,7 +18,7 @@ Out of scope: email or chat intake, languages other than English, CRM integratio
 | 2 | Structured output with the Converse API | Done | `step-2-complete` | Free |
 | 3 | Guardrails and security | Done | `step-3-complete` | Free (Guardrails bill per request) |
 | 4 | Grounding with a Knowledge Base | Done (SC-4 not met, see Step 5) | `step-4-complete` | S3 Vectors storage only, cents |
-| 5 | Model comparison | Not started | | Free |
+| 5 | Model comparison | In progress (Nova Lite and Mistral Large 3 run, Haiku not yet) | | Free |
 | 6 | Human in the loop | Optional, not started | | |
 
 ---
@@ -243,9 +243,9 @@ Every choice so far used one model. Is a bigger one worth it, and would a smalle
 Run the evaluation set across Nova Lite, Mistral Large 3 and Claude Haiku. Add an LLM-as-judge for reply quality and spot-check it by hand. See [STEP-5-GUIDE.md](docs/STEP-5-GUIDE.md).
 
 **Exit:**
-- [ ] A table of accuracy, CRITICAL recall, reply quality, p95 latency and cost per ticket for each model.
+- [ ] A table of accuracy, CRITICAL recall, reply quality, p95 latency and cost per ticket for each model. *(Nova Lite and Mistral Large 3 have accuracy, recall, latency and cost, in the README; Mistral's replies are reviewed against the facts sheet by an AI assistant, not yet spot-checked by hand; Haiku has not been run)*
 - [ ] A model chosen in writing, with the reason.
-- [ ] `step-5` row.
+- [ ] `step-5` row. *(the row in RESULTS.md is still empty)*
 
 *Free at rest. Each run costs more than earlier steps; still under a dollar.*
 
