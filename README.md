@@ -601,7 +601,7 @@ All runs and findings are in [RESULTS.md](RESULTS.md).
 
 #### Results: Nova Lite vs Mistral Large 3
 
-The same 42 tickets, the same prompt and pipeline, with only the `ModelId` deploy parameter changed. Nova Lite is a small, low-cost model. Mistral Large 3 is a much larger one.
+The same 42 tickets and the same prompt and pipeline, with the `ModelId` deploy parameter changed. The one other change is the output token ceiling, raised from 512 to 1024 because Mistral was cut off mid-answer; it only bills the tokens used, so it doesn't change Nova Lite's cost. Nova Lite is a small, low-cost model. Mistral Large 3 is a much larger one.
 
 | | Nova Lite | Mistral Large 3 |
 |---|---|---|
