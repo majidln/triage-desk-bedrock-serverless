@@ -1,5 +1,7 @@
 # Triage Desk: an AI-Powered Customer Support Pipeline
 
+![Abstract illustration: scattered tickets converging into a single glowing triage point and leaving it sorted into four urgency lanes](docs/hero.svg)
+
 A serverless AWS pipeline that triages customer support tickets with an LLM: it classifies each ticket's urgency and drafts a reply grounded in the company's own policies. Every change is measured against an evaluation set.
 
 ## Why I built this
