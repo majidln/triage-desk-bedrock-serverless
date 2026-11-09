@@ -13,6 +13,8 @@ export interface ModelPrice {
 export const MODEL_PRICES: Record<string, ModelPrice> = {
   'amazon.nova-lite-v1:0': { inputPerM: 0.06, outputPerM: 0.24 },
   'amazon.nova-pro-v1:0': { inputPerM: 0.8, outputPerM: 3.2 },
+  // Checked on 2026-11-05.
+  'mistral.mistral-large-3-675b-instruct': { inputPerM: 0.5, outputPerM: 1.5 },
 };
 
 // The price of one call, or undefined when the model isn't in the table.

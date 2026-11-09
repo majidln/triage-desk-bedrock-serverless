@@ -9,18 +9,20 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockAgentRuntimeClient, RetrieveCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
+import { ChangeMessageVisibilityBatchCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { FLAGGED_REPLY, handler, processRecord } from '../../handlers/support-request-processor';
+import { FLAGGED_REPLY, handler, processRecord, queueUrl } from '../../handlers/support-request-processor';
 import { logger } from '../../shared/logger';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 const bedrockMock = mockClient(BedrockRuntimeClient);
 const agentMock = mockClient(BedrockAgentRuntimeClient);
 const snsMock = mockClient(SNSClient);
+const sqsMock = mockClient(SQSClient);
 
 // What Retrieve finds for every ticket unless a test says otherwise: one chunk, cited as id "1"
 const RETRIEVED_TEXT = 'Invite teammates by email under Settings → Members.';
@@ -116,6 +118,7 @@ describe('support-request-processor', () => {
     bedrockMock.reset();
     agentMock.reset();
     snsMock.reset();
+    sqsMock.reset();
     agentMock.on(RetrieveCommand).resolves(retrieved);
     bedrockMock
       .on(ConverseCommand)
@@ -394,12 +397,51 @@ describe('support-request-processor', () => {
       expect(snsMock.commandCalls(PublishCommand)).toHaveLength(1);
     });
 
+    it('puts deferred tickets back in the queue at once (visibility 0)', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+      sqsMock.on(ChangeMessageVisibilityBatchCommand).resolves({ Successful: [], Failed: [] });
+      const event: SQSEvent = { Records: [exampleRecord(1), exampleRecord(2), exampleRecord(3)] };
+
+      await handler(event, contextWithRemaining(60_000, 20_000));
+
+      const calls = sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand);
+      expect(calls).toHaveLength(1);
+      const input = calls[0].args[0].input;
+      expect(input.QueueUrl).toBe(queueUrl(exampleRecord(2).eventSourceARN));
+      expect(input.Entries).toHaveLength(2);
+      expect(input.Entries?.every((e) => e.VisibilityTimeout === 0)).toBe(true);
+    });
+
+    it("doesn't release a ticket that failed: a throttled model gets the full visibility timeout", async () => {
+      bedrockMock.on(ConverseCommand).rejects(new ThrottlingException(sdkError));
+
+      await handler({ Records: [exampleRecord(1)] }, lambdaContext);
+
+      expect(sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand)).toHaveLength(0);
+    });
+
+    it('still reports deferred tickets when the release fails', async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+      sqsMock.on(ChangeMessageVisibilityBatchCommand).rejects(new Error('SQS unavailable'));
+      const event: SQSEvent = { Records: [exampleRecord(1), exampleRecord(2)] };
+
+      const result = await handler(event, contextWithRemaining(60_000, 20_000));
+
+      expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'msg-2' }] });
+    });
+
     it('starts a ticket with exactly the worst-case budget left (45 s)', async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
       const result = await handler({ Records: [exampleRecord(1)] }, contextWithRemaining(45_000));
 
       expect(result).toEqual({ batchItemFailures: [] });
+    });
+
+    it('builds the queue URL from the event source ARN', () => {
+      expect(queueUrl('arn:aws:sqs:us-east-1:123456789012:triage-desk-RequestQueue')).toBe(
+        'https://sqs.us-east-1.amazonaws.com/123456789012/triage-desk-RequestQueue',
+      );
     });
   });
 

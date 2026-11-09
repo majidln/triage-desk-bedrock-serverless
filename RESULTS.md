@@ -448,7 +448,7 @@ Asked for 3, Retrieve returned 2.1 on average: children that share a parent come
 | Model | Urgency accuracy | CRITICAL recall | Reply quality | p95 latency | Cost / ticket |
 |---|---|---|---|---|---|
 | Nova Lite | | | | | |
-| Nova Pro | | | | | |
+| Mistral Large 3 | | | | | |
 | Claude Haiku | | | | | |
 
 **Decision:**

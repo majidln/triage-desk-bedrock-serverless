@@ -26,7 +26,7 @@ export function scoreAccuracy(collected: Collected[]): Accuracy {
 
 export const LEVELS: Urgency[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 // OTHER: the model answered with something that isn't a level (v0 doesn't validate, gap G6).
-// NONE: the model never answered (fallback, timeout, not submitted).
+// NONE: the model never answered (fallback, failed, timeout, not submitted).
 export const COLUMNS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'OTHER', 'NONE'] as const;
 export type Column = (typeof COLUMNS)[number];
 

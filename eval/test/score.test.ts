@@ -165,11 +165,24 @@ test('groupBy keeps every item exactly once', () => {
 
 test("cost per ticket from the smoke run's real token counts", () => {
   const usage = { invocations: 3, inputTokens: 229, outputTokens: 473, throttles: 0 };
-  assert.equal(costPerTicket(usage, 3).toFixed(6), '0.000042');
-  assert.equal(costPerTicket(usage, 0), 0);
+  const novaLite = { inputPerM: 0.06, outputPerM: 0.24 };
+  assert.equal(costPerTicket(usage, 3, novaLite)?.toFixed(6), '0.000042');
+  assert.equal(costPerTicket(usage, 0, novaLite), 0);
+  // No price: unknown, never $0.
+  assert.equal(costPerTicket(usage, 3, undefined), undefined);
 });
 
 test('latency percentiles use the nearest rank', () => {
   assert.deepEqual(latency([4, 1, 3, 2]), { p50: 2, p95: 4, max: 4, count: 4 });
   assert.deepEqual(latency([]), { p50: 0, p95: 0, max: 0, count: 0 });
+});
+
+test('a FAILED ticket counts as unanswered, like a timeout', () => {
+  const a = scoreAccuracy([
+    collected(ticket('T1', 'LOW'), 'processed', 'LOW'),
+    collected(ticket('T2', 'LOW'), 'failed'),
+  ]);
+  assert.equal(a.correct, 1);
+  assert.equal(a.processed, 1);
+  assert.equal(a.total, 2);
 });

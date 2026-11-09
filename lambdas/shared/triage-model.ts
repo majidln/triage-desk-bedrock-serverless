@@ -25,7 +25,9 @@ export async function invokeTriageModel(
   chunks: RetrievedChunk[],
 ): Promise<TriageResult> {
   const inferenceConfig = {
-    maxTokens: 512,
+    // 512 cut off Mistral Large 3 mid-tool-call (stopReason: max_tokens). Only the tokens
+    // used are billed, so a higher ceiling costs nothing for a model that writes less.
+    maxTokens: 1024,
     temperature: 0.1,
     topP: 0.9,
   };

@@ -65,6 +65,8 @@ export async function collectAll(submissions: Submission[]): Promise<Collected[]
       for (const { s, i } of chunk) {
         const item = items.get(s.ticketId!);
         if (item?.status === 'PROCESSED') results[i] = toCollected(s, item);
+        // FAILED is final too: waiting for it would only turn it into a timeout.
+        if (item?.status === 'FAILED') results[i] = { submission: s, outcome: 'failed', usage: item.usage };
       }
     }
 

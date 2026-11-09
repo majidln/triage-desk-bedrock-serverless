@@ -15,6 +15,7 @@ import {
 } from '../shared/types';
 import { classifyError, PermanentError } from '../shared/classify-error';
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
+import { ChangeMessageVisibilityBatchCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { requireEnv } from '../shared/env';
 import { invokeTriageModel, MODEL_ATTEMPT_TIMEOUT_MS, MODEL_MAX_ATTEMPTS } from '../shared/triage-model';
 import { retrieveChunks, RETRIEVE_ATTEMPT_TIMEOUT_MS, RETRIEVE_MAX_ATTEMPTS } from '../shared/knowledge';
@@ -47,6 +48,7 @@ const ddClient = new DynamoDBClient({});
 // failing the save (and retrying a ticket that was triaged).
 const docClient = DynamoDBDocumentClient.from(ddClient, { marshallOptions: { removeUndefinedValues: true } });
 const snsClient = new SNSClient({});
+const sqsClient = new SQSClient({});
 
 // How one record ended when processRecord returns. A record that throws isn't an outcome:
 // it goes back to SQS for a retry.
@@ -63,6 +65,7 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
   logger.addContext(context);
 
   const batchItemFailures: SQSBatchItemFailure[] = [];
+  const deferred: SQSRecord[] = [];
 
   for (const record of event.Records) {
     // If Lambda stops us at its timeout, nothing is returned and SQS retries the whole
@@ -71,6 +74,7 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
     if (remainingMs < TICKET_BUDGET_MS) {
       logger.warn('RecordDeferred', { messageId: record.messageId, remainingMs });
       batchItemFailures.push({ itemIdentifier: record.messageId });
+      deferred.push(record);
       continue;
     }
     try {
@@ -81,8 +85,38 @@ export const handler = async (event: SQSEvent, context: Context): Promise<SQSBat
     }
   }
 
+  await releaseDeferred(deferred);
   return { batchItemFailures };
 };
+
+// A deferred ticket did nothing wrong: it only ran out of time in this batch. Left alone it
+// would stay hidden for the queue's whole visibility timeout (6 minutes); visibility 0 lets
+// the next poll pick it up now. Best effort: if this fails, it still comes back, just later.
+// A failed ticket isn't released here, so a throttled model still gets its 6 minutes to recover.
+async function releaseDeferred(records: SQSRecord[]): Promise<void> {
+  if (records.length === 0) return;
+  try {
+    const result = await sqsClient.send(
+      new ChangeMessageVisibilityBatchCommand({
+        QueueUrl: queueUrl(records[0].eventSourceARN),
+        // A batch holds at most 10 records, the SQS limit for one call.
+        Entries: records.map((r, i) => ({ Id: String(i), ReceiptHandle: r.receiptHandle, VisibilityTimeout: 0 })),
+      }),
+    );
+    // A batch call succeeds even when some entries don't: those are listed, not thrown.
+    if (result.Failed?.length) {
+      logger.warn('DeferredReleaseFailed', { count: result.Failed.length, failed: result.Failed });
+    }
+  } catch (err) {
+    logger.warn('DeferredReleaseFailed', { count: records.length, error: err });
+  }
+}
+
+// arn:aws:sqs:us-east-1:123456789012:name -> https://sqs.us-east-1.amazonaws.com/123456789012/name
+export function queueUrl(queueArn: string): string {
+  const [, , , region, account, name] = queueArn.split(':');
+  return `https://sqs.${region}.amazonaws.com/${account}/${name}`;
+}
 
 // The reply to a ticket the guardrail flagged. Sent without calling the model, so what the ticket
 // says can't reach it; a person reads the ticket instead, and answers any real question in it.

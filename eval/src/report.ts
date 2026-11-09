@@ -10,7 +10,7 @@ import type { ReplyCheck } from './score/replies.ts';
 import { COLUMNS, LEVELS } from './score/urgency.ts';
 import type { Accuracy, LevelScore, Matrix } from './score/urgency.ts';
 import type { Collected, Outcome, Urgency } from './types.ts';
-import { pct, secs } from './util.ts';
+import { money, pct, secs } from './util.ts';
 
 // Compute once, display many times: everything goes into one Report, and the
 // terminal, the JSON and the Markdown are all rendered from it.
@@ -52,7 +52,7 @@ export interface Report {
     ticketsFile: string;
     ticketsSha: string; // which version of the exam
     modelId: string;
-    pricePerMillion: { input: number; output: number };
+    pricePerMillion?: { input: number; output: number }; // absent when the model has no price
     region: string;
     apiUrl: string;
     concurrency: number;
@@ -66,7 +66,7 @@ export interface Report {
   replyChecks: ReplyCheck[];
   latency: { ack: Latency; processing: Latency };
   usage: BedrockUsage; // CloudWatch, account-wide
-  costPerTicket: number; // from CloudWatch
+  costPerTicket?: number; // from CloudWatch; absent when the model has no price
   ticketCost: TicketCost; // from the tickets (Step 2 on)
   ticketCostPerTicket?: number; // undefined when not every ticket has a cost
   tickets: TicketRow[];
@@ -237,7 +237,7 @@ export function renderMarkdown(r: Report): string {
       r.usage.throttles,
       r.usage.inputTokens,
       r.usage.outputTokens,
-      `$${r.costPerTicket.toFixed(6)}`,
+      money(r.costPerTicket),
     ],
   ];
   if (t.withUsage > 0) {
@@ -247,15 +247,14 @@ export function renderMarkdown(r: Report): string {
       '-',
       t.inputTokens,
       t.outputTokens,
-      r.ticketCostPerTicket === undefined ? 'unknown' : `$${r.ticketCostPerTicket.toFixed(6)}`,
+      money(r.ticketCostPerTicket),
     ]);
   }
   table(['Source', 'Calls', 'Throttled', 'Input tokens', 'Output tokens', 'Cost / ticket'], rows);
-  lines.push(
-    `CloudWatch cost uses $${m.pricePerMillion.input}/M input and $${m.pricePerMillion.output}/M output; ` +
-      'ticket cost uses the price each ticket recorded. Model only.',
-    '',
-  );
+  const cloudwatchPrice = m.pricePerMillion
+    ? `CloudWatch cost uses $${m.pricePerMillion.input}/M input and $${m.pricePerMillion.output}/M output`
+    : 'CloudWatch cost is unknown: the model has no price in model-prices.ts';
+  lines.push(`${cloudwatchPrice}; ticket cost uses the price each ticket recorded. Model only.`, '');
   if (t.withUsage > 0) {
     const match = t.inputTokens === r.usage.inputTokens && t.outputTokens === r.usage.outputTokens;
     lines.push(
@@ -314,7 +313,7 @@ export async function writeReport(r: Report): Promise<string[]> {
 
 // The summary's cost: from the tickets when they record it (Step 2 on), else from CloudWatch.
 function costCell(r: Report): string {
-  if (r.ticketCost.withUsage === 0) return `$${r.costPerTicket.toFixed(6)}`;
+  if (r.ticketCost.withUsage === 0) return money(r.costPerTicket);
   return r.ticketCostPerTicket === undefined
     ? `unknown (${r.ticketCost.priced}/${r.ticketCost.withUsage} priced)`
     : `$${r.ticketCostPerTicket.toFixed(6)}`;

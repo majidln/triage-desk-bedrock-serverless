@@ -240,7 +240,7 @@ Write the Flowboard help center and policy docs (fictional, in the repo). Put th
 ### Step 5: Is Nova Lite actually good enough?
 Every choice so far used one model. Is a bigger one worth it, and would a smaller one do?
 
-Run the evaluation set across Nova Lite, Nova Pro and Claude Haiku. Add an LLM-as-judge for reply quality and spot-check it by hand.
+Run the evaluation set across Nova Lite, Mistral Large 3 and Claude Haiku. Add an LLM-as-judge for reply quality and spot-check it by hand. See [STEP-5-GUIDE.md](docs/STEP-5-GUIDE.md).
 
 **Exit:**
 - [ ] A table of accuracy, CRITICAL recall, reply quality, p95 latency and cost per ticket for each model.

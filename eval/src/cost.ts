@@ -2,7 +2,10 @@
 // The only file that knows about CloudWatch.
 
 import { CloudWatchClient, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
-import { MINUTE_MS, PRICE_PER_M_INPUT, PRICE_PER_M_OUTPUT, REGION } from './config.ts';
+// One price table for the pipeline and the evaluation, so they can't disagree.
+import type { ModelPrice } from '../../lambdas/shared/model-prices.ts';
+export { priceFor } from '../../lambdas/shared/model-prices.ts';
+import { DEFAULT_MODEL_ID, MINUTE_MS, REGION } from './config.ts';
 import type { Collected } from './types.ts';
 import { ratio } from './util.ts';
 
@@ -62,8 +65,19 @@ export async function waitForUsage(modelId: string, start: Date, end: Date): Pro
   return usage;
 }
 
-export function costPerTicket(usage: BedrockUsage, tickets: number): number {
-  const cost = (usage.inputTokens * PRICE_PER_M_INPUT + usage.outputTokens * PRICE_PER_M_OUTPUT) / 1_000_000;
+// The model the deployed stack called, as the tickets recorded it. Flagged tickets record
+// "none" (they never reach a model), so they don't count. Several models in one run means
+// the stack was redeployed mid-run: the numbers would mix two models, so stop.
+export function runModelId(collected: Collected[]): string {
+  const ids = new Set(collected.flatMap((c) => c.usage?.modelId ?? []).filter((id) => id !== 'none'));
+  if (ids.size > 1) throw new Error(`Tickets used more than one model: ${[...ids].join(', ')}`);
+  return ids.values().next().value ?? DEFAULT_MODEL_ID;
+}
+
+// undefined when the model has no price: an unknown cost must never read as $0.
+export function costPerTicket(usage: BedrockUsage, tickets: number, price?: ModelPrice): number | undefined {
+  if (price === undefined) return undefined;
+  const cost = (usage.inputTokens * price.inputPerM + usage.outputTokens * price.outputPerM) / 1_000_000;
   return ratio(cost, tickets);
 }
 

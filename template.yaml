@@ -204,6 +204,12 @@ Resources:
                 - bedrock:InvokeModel
               Resource:
                 - !Sub 'arn:aws:bedrock:*::foundation-model/${ModelId}'
+            # Put a deferred ticket back in the queue at once instead of after the visibility
+            # timeout. The SQS event source grants receive and delete, not this.
+            - Effect: Allow
+              Action:
+                - sqs:ChangeMessageVisibility
+              Resource: !GetAtt SupportRequestQueue.Arn
             # Find the chunks of Flowboard's documents that match a ticket. Nothing on S3 or
             # S3 Vectors: Bedrock reads the index with the Knowledge Base's own role.
             - Effect: Allow
